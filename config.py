@@ -12,9 +12,9 @@ class Config:
     MATTERMOST_BOT_USERNAME = os.getenv('MATTERMOST_BOT_USERNAME', 'summary-bot')
     
     # LLM настройки
-    LLM_PROXY_TOKEN = os.getenv('LLM_PROXY_TOKEN', '8d10b6d4-2e40-42fc-a66a-c9c6bf20c92c')
-    LLM_BASE_URL = os.getenv('LLM_BASE_URL', 'https://llm.1bitai.ru')
-    LLM_MODEL = os.getenv('LLM_MODEL', 'qwen3:14b')
+    LLM_PROXY_TOKEN = os.getenv('LLM_PROXY_TOKEN', '')
+    LLM_BASE_URL = os.getenv('LLM_BASE_URL', '')
+    LLM_MODEL = os.getenv('LLM_MODEL', '')
     
     # Общие настройки бота
     BOT_PORT = int(os.getenv('BOT_PORT', 8080))
