@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  summary-bot:
+    build: .
+    container_name: mattermost-summary-bot
+    ports:
+      - "8080:8080"
+    environment:
+      - MATTERMOST_URL=${MATTERMOST_URL}
+      - MATTERMOST_TOKEN=${MATTERMOST_TOKEN}
+      - MATTERMOST_BOT_USERNAME=${MATTERMOST_BOT_USERNAME:-summary-bot}
+      - LLM_PROXY_TOKEN=${LLM_PROXY_TOKEN:-8d10b6d4-2e40-42fc-a66a-c9c6bf20c92c}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://llm.1bitai.ru}
+      - LLM_MODEL=${LLM_MODEL:-qwen3:14b}
+      - BOT_PORT=8080
+      - DEBUG=${DEBUG:-false}
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  logs: 
