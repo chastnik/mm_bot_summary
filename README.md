@@ -123,11 +123,6 @@ python main.py
 python bot_standalone.py
 ```
 
-### Docker запуск
-```bash
-docker-compose up -d
-```
-
 После запуска:
 - 🌐 **Веб-интерфейс**: http://localhost:8080
 - 📊 **Статус**: http://localhost:8080/status  
@@ -180,34 +175,6 @@ curl http://localhost:8080/status
 curl http://localhost:8080/metrics
 ```
 
-## 🐳 Docker
-
-### Сборка образа
-```bash
-docker build -t summary-bot .
-```
-
-### Запуск контейнера
-```bash
-docker run -d \
-  --name summary-bot \
-  -p 8080:8080 \
-  --env-file .env \
-  summary-bot
-```
-
-### Docker Compose
-```bash
-# Запуск
-docker-compose up -d
-
-# Просмотр логов
-docker-compose logs -f
-
-# Остановка
-docker-compose down
-```
-
 ## 🔍 Мониторинг и диагностика
 
 ### Логи
@@ -215,8 +182,8 @@ docker-compose down
 # Просмотр логов
 tail -f bot.log
 
-# Логи Docker
-docker-compose logs -f summary-bot
+# Мониторинг в реальном времени
+python main.py
 ```
 
 ### Статус компонентов
@@ -228,19 +195,19 @@ docker-compose logs -f summary-bot
 ### Диагностика проблем
 
 #### WebSocket не подключается
-1. Проверьте URL и токен Mattermost
+1. Проверьте URL и токен Mattermost в `.env`
 2. Убедитесь в доступности сервера
 3. Проверьте сетевую связность
 
 #### LLM недоступен
-1. Проверьте корпоративный токен
-2. Убедитесь в доступности LLM сервиса
-3. Проверьте настройки прокси
+1. Обновите `LLM_PROXY_TOKEN` в `.env`
+2. Проверьте доступность https://llm.1bitai.ru
+3. Проверьте корпоративные сетевые настройки
 
-#### Бот не отвечает
-1. Проверьте статус на `/health`
-2. Убедитесь что бот добавлен в канал
-3. Проверьте права доступа бота
+#### Бот не отвечает на команды
+1. Убедитесь что бот добавлен в канал
+2. Проверьте права доступа бота
+3. Попробуйте разные варианты команд
 
 ## 🔧 Разработка
 
@@ -259,8 +226,6 @@ summary_bot/
 ├── llm_client.py       # LLM интеграция
 ├── web_server.py       # FastAPI веб-сервер
 ├── requirements.txt    # Python зависимости
-├── Dockerfile         # Docker образ
-├── docker-compose.yml # Docker Compose
 ├── env.example        # Пример конфигурации
 └── README.md          # Документация
 ```
@@ -273,6 +238,49 @@ summary_bot/
 4. **Современный веб-интерфейс** - адаптивный дизайн
 5. **Расширенное API** - готовность к интеграции
 6. **Метрики мониторинга** - продакшен ready
+
+## 🚀 Деплой в продакшен
+
+### Systemd сервис
+```bash
+# Создание сервиса
+sudo nano /etc/systemd/system/summary-bot.service
+
+# Содержимое файла:
+[Unit]
+Description=Mattermost Summary Bot
+After=network.target
+
+[Service]
+Type=simple
+User=summary-bot
+WorkingDirectory=/opt/summary-bot
+Environment=PATH=/opt/summary-bot/venv/bin
+ExecStart=/opt/summary-bot/venv/bin/python main.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+
+# Активация
+sudo systemctl daemon-reload
+sudo systemctl enable summary-bot
+sudo systemctl start summary-bot
+```
+
+### Nginx прокси (опционально)
+```nginx
+server {
+    listen 80;
+    server_name summary-bot.yourdomain.com;
+    
+    location / {
+        proxy_pass http://localhost:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
 
 ## 📋 Требования
 

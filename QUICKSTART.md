@@ -1,80 +1,61 @@
-# 🚀 Быстрый старт
+# 🚀 Быстрый старт - Mattermost Summary Bot
 
-## 1. Настройка конфигурации
+## Минимальная установка (5 минут)
 
-Создайте файл `.env`:
-
+### 1. Скачивание
 ```bash
-# Скопируйте шаблон
-cp env.example .env
-
-# Отредактируйте настройки Mattermost
-nano .env
+git clone <repository-url>
+cd summary_bot
 ```
 
-Заполните обязательные поля:
-```env
-MATTERMOST_URL=https://your-mattermost-instance.com
-MATTERMOST_TOKEN=your-bot-token
-```
-
-**LLM настройки уже предустановлены!**
-
-## 2. Создание бота в Mattermost
-
-1. **System Console** → **Integrations** → **Bot Accounts**
-2. **Enable Bot Account Creation** = True
-3. **Create Bot Account**:
-   - Username: `summary-bot`
-   - Display Name: `Summary Bot`
-   - Description: `Бот для создания саммари тредов`
-4. **Скопируйте токен** в файл `.env`
-
-## 3. Запуск
-
-### Простой способ:
+### 2. Установка зависимостей
 ```bash
-./start.sh
-```
-
-### Docker:
-```bash
-docker-compose up -d
-```
-
-### Python:
-```bash
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
 pip install -r requirements.txt
+```
+
+### 3. Настройка
+```bash
+cp env.example .env
+# Отредактируйте .env с вашими настройками
+```
+
+### 4. Запуск
+```bash
 python main.py
 ```
 
-## 4. Проверка
+### 5. Проверка
+- Откройте http://localhost:8080
+- Добавьте бота в канал: `/invite @summary-bot`
+- Используйте команду: `/summary`
 
-- **Веб-интерфейс**: http://localhost:8080
-- **Тест LLM**: `python test_llm.py`
-- **Статус**: `curl http://localhost:8080/health`
-
-## 5. Использование
-
-1. Добавьте бота в канал: `/invite @summary-bot`
-2. В треде напишите: `/summary`
-3. Получите саммари! 🎉
-
-## Поддерживаемые команды:
-- `/summary` 
-- `!summary`
-- `/саммари`
-- `summary`
-
-## Устранение проблем:
+## Основные настройки в .env
 
 ```bash
-# Логи Docker
-docker-compose logs -f summary-bot
+# Mattermost (ОБЯЗАТЕЛЬНО)
+MATTERMOST_URL=https://your-server.com
+MATTERMOST_TOKEN=your-bot-token
 
-# Перезапуск
-docker-compose restart summary-bot
+# LLM (корпоративная)
+LLM_PROXY_TOKEN=8d10b6d4-2e40-42fc-a66a-c9c6bf20c92c
+LLM_BASE_URL=https://llm.1bitai.ru
+LLM_MODEL=qwen3:14b
+```
 
-# Проверка статуса
-curl http://localhost:8080/status
-``` 
+## Команды бота
+
+- `/summary` - создать саммари треда
+- `!summary` - альтернативный вариант
+- `саммари` - русская команда
+
+## Мониторинг
+
+- **Дашборд**: http://localhost:8080
+- **Статус**: http://localhost:8080/status
+- **API**: http://localhost:8080/docs
+
+---
+
+**Готово! 🎉** Бот работает и готов создавать саммари ваших обсуждений. 
