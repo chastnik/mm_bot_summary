@@ -4,7 +4,6 @@
 Предоставляет веб-интерфейс для мониторинга состояния бота
 """
 
-import json
 from datetime import datetime
 from typing import Dict, Any
 

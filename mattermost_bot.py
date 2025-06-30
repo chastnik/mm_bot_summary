@@ -12,8 +12,8 @@ import requests
 import websockets
 import ssl
 import time
-from typing import Dict, List, Any, Optional, Callable
-from urllib.parse import urlparse, parse_qs
+from typing import Dict, List, Any, Optional
+from urllib.parse import urlparse
 
 from config import Config
 from llm_client import LLMClient
@@ -35,7 +35,6 @@ class MattermostBot:
         self._running = False
         self._websocket = None
         self._session_requests = requests.Session()
-        self._message_handlers = []
         
     async def initialize(self):
         """Инициализация бота"""

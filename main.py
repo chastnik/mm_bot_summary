@@ -7,7 +7,6 @@ import asyncio
 import logging
 import signal
 import sys
-from concurrent.futures import ThreadPoolExecutor
 
 from config import Config
 from mattermost_bot import MattermostBot

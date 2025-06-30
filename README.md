@@ -118,11 +118,6 @@ DEBUG=false
 python main.py
 ```
 
-### Автономная версия (резервная)
-```bash
-python bot_standalone.py
-```
-
 После запуска:
 - 🌐 **Веб-интерфейс**: http://localhost:8080
 - 📊 **Статус**: http://localhost:8080/status  
@@ -221,7 +216,6 @@ python config.py
 summary_bot/
 ├── main.py              # Основная точка входа
 ├── mattermost_bot.py    # WebSocket бот (v2.0)
-├── bot_standalone.py    # HTTP-only версия (резерв)
 ├── config.py           # Управление конфигурацией
 ├── llm_client.py       # LLM интеграция
 ├── web_server.py       # FastAPI веб-сервер
