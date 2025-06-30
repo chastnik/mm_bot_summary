@@ -74,6 +74,9 @@ class MattermostBot:
             
             logger.info(f"✅ Подключен к Mattermost как {self.bot_username} (ID: {self.bot_user_id})")
             
+            # Получаем список каналов, в которых уже находится бот
+            await self._load_existing_channels()
+            
             # Тестируем соединение с LLM
             llm_ok = await self.llm_client.test_connection()
             if llm_ok:
@@ -85,6 +88,64 @@ class MattermostBot:
             
         except Exception as e:
             logger.error(f"❌ Ошибка инициализации бота: {e}")
+            return False
+    
+    async def _load_existing_channels(self):
+        """Загружает список каналов, в которых уже находится бот"""
+        try:
+            # Получаем список каналов для текущего пользователя (бота)
+            response = self._session_requests.get(
+                f"{self.base_url}/api/v4/users/me/channels",
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                channels = response.json()
+                channel_count = len(channels)
+                
+                logger.info(f"📋 Бот уже находится в {channel_count} канал(ах)")
+                
+                # Логируем типы каналов
+                types_count = {}
+                for channel in channels:
+                    channel_type = channel.get('type', 'unknown')
+                    types_count[channel_type] = types_count.get(channel_type, 0) + 1
+                
+                type_names = {
+                    'O': 'открытых',
+                    'P': 'приватных', 
+                    'D': 'личных сообщений',
+                    'G': 'групповых'
+                }
+                
+                for type_code, count in types_count.items():
+                    type_name = type_names.get(type_code, f'типа {type_code}')
+                    logger.info(f"   • {count} {type_name} каналов")
+                    
+            else:
+                logger.warning(f"⚠️ Не удалось получить список каналов: {response.status_code}")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка загрузки списка каналов: {e}")
+    
+    async def _check_channel_permissions(self, channel_id: str) -> bool:
+        """Проверяет разрешения бота в канале"""
+        try:
+            # Проверяем, есть ли доступ к каналу
+            response = self._session_requests.get(
+                f"{self.base_url}/api/v4/channels/{channel_id}/members/me",
+                timeout=5
+            )
+            
+            if response.status_code == 200:
+                member_info = response.json()
+                return True
+            else:
+                logger.warning(f"⚠️ Нет доступа к каналу {channel_id}: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка проверки разрешений в канале {channel_id}: {e}")
             return False
     
     async def start_listening(self):
@@ -192,14 +253,19 @@ class MattermostBot:
         """Обработка сообщения от WebSocket"""
         try:
             event = json.loads(message)
+            event_type = event.get('event')
             
-            # Обрабатываем события постов
-            if event.get('event') == 'posted':
+            # Обрабатываем различные типы событий
+            if event_type == 'posted':
                 await self._handle_post_event(event)
-            elif event.get('event') == 'hello':
+            elif event_type == 'user_added':
+                await self._handle_user_added_event(event)
+            elif event_type == 'channel_member_added':
+                await self._handle_channel_member_added_event(event)
+            elif event_type == 'hello':
                 logger.debug("💬 Получен hello от WebSocket")
             else:
-                logger.debug(f"💬 Событие WebSocket: {event.get('event')}")
+                logger.debug(f"💬 Событие WebSocket: {event_type}")
                 
         except json.JSONDecodeError as e:
             logger.error(f"❌ Ошибка парсинга JSON от WebSocket: {e}")
@@ -237,6 +303,96 @@ class MattermostBot:
         except Exception as e:
             logger.error(f"❌ Ошибка обработки события поста: {e}")
     
+    async def _handle_user_added_event(self, event: Dict[str, Any]):
+        """Обработка события добавления пользователя в канал"""
+        try:
+            data = event.get('data', {})
+            user_id = data.get('user_id')
+            channel_id = data.get('channel_id')
+            
+            # Проверяем, не добавили ли нашего бота в канал
+            if user_id == self.bot_user_id:
+                logger.info(f"🎉 Бот добавлен в новый канал: {channel_id}")
+                await self._initialize_in_channel(channel_id)
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка обработки события user_added: {e}")
+    
+    async def _handle_channel_member_added_event(self, event: Dict[str, Any]):
+        """Обработка события добавления участника в канал"""
+        try:
+            data = event.get('data', {})
+            user_id = data.get('user_id')
+            channel_id = data.get('channel_id')
+            
+            # Проверяем, не добавили ли нашего бота в канал
+            if user_id == self.bot_user_id:
+                logger.info(f"🎉 Бот добавлен в канал: {channel_id}")
+                await self._initialize_in_channel(channel_id)
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка обработки события channel_member_added: {e}")
+    
+    async def _initialize_in_channel(self, channel_id: str):
+        """Инициализация бота в новом канале"""
+        try:
+            # Получаем информацию о канале
+            channel_info = await self._get_channel_info(channel_id)
+            if not channel_info:
+                return
+            
+            channel_name = channel_info.get('display_name', channel_info.get('name', 'неизвестный'))
+            channel_type = channel_info.get('type', 'O')  # O=open, P=private, D=direct
+            
+            # Определяем тип канала для логирования
+            type_emoji = {
+                'O': '🌐',  # Открытый канал
+                'P': '🔒',  # Приватный канал  
+                'D': '💬'   # Прямые сообщения
+            }.get(channel_type, '📁')
+            
+            logger.info(f"{type_emoji} Инициализация в канале '{channel_name}' (ID: {channel_id})")
+            
+            # Отправляем приветственное сообщение (только для открытых и приватных каналов)
+            if channel_type in ['O', 'P']:
+                welcome_message = f"""👋 Привет! Я **Summary Bot** - помогаю создавать саммари тредов.
+
+**Как использовать:**
+• В любом треде напишите `/summary` - создам краткое резюме обсуждения
+• Поддерживаю команды: `/summary`, `!summary`, `summary`, `саммари`
+
+**Что я анализирую:**
+• Участников обсуждения
+• Основные темы и моменты
+• Задачи и выводы
+• Структурированное резюме
+
+Готов к работе! 🚀"""
+                
+                await self._send_message(channel_id, welcome_message)
+                logger.info(f"✅ Приветственное сообщение отправлено в {channel_name}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка инициализации в канале {channel_id}: {e}")
+    
+    async def _get_channel_info(self, channel_id: str) -> Optional[Dict[str, Any]]:
+        """Получает информацию о канале"""
+        try:
+            response = self._session_requests.get(
+                f"{self.base_url}/api/v4/channels/{channel_id}",
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"❌ Ошибка получения информации о канале {channel_id}: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка запроса информации о канале {channel_id}: {e}")
+            return None
+    
     def _is_summary_command(self, message: str) -> bool:
         """Проверяет, является ли сообщение командой /summary"""
         patterns = [
@@ -253,6 +409,11 @@ class MattermostBot:
     async def _handle_summary_command(self, channel_id: str, thread_id: str, message_id: str):
         """Обработка команды создания саммари"""
         try:
+            # Проверяем разрешения в канале
+            if not await self._check_channel_permissions(channel_id):
+                logger.warning(f"⚠️ Нет разрешений для ответа в канале {channel_id}")
+                return
+            
             # Отправляем уведомление о начале обработки
             await self._send_message(
                 channel_id, 
@@ -271,22 +432,42 @@ class MattermostBot:
                 )
                 return
             
+            # Проверяем минимальное количество сообщений для саммари
+            if len(thread_messages) < 2:
+                await self._send_message(
+                    channel_id,
+                    "📝 В треде недостаточно сообщений для создания саммари (минимум 2 сообщения).",
+                    root_id=thread_id
+                )
+                return
+            
             logger.info(f"📊 Обрабатываю {len(thread_messages)} сообщений в треде")
             
             # Генерируем саммари
             summary = await self.llm_client.generate_thread_summary(thread_messages)
             
-            # Отправляем саммари
-            await self._send_message(channel_id, summary, root_id=thread_id)
-            logger.info("✅ Саммари отправлено")
+            if summary:
+                # Отправляем саммари
+                await self._send_message(channel_id, summary, root_id=thread_id)
+                logger.info("✅ Саммари отправлено")
+            else:
+                await self._send_message(
+                    channel_id,
+                    "❌ Не удалось сгенерировать саммари. Возможно, проблемы с LLM сервисом.",
+                    root_id=thread_id
+                )
             
         except Exception as e:
             logger.error(f"❌ Ошибка при создании саммари: {e}")
-            await self._send_message(
-                channel_id,
-                "❌ Произошла ошибка при создании саммари. Попробуйте позже.",
-                root_id=thread_id
-            )
+            try:
+                await self._send_message(
+                    channel_id,
+                    "❌ Произошла ошибка при создании саммари. Попробуйте позже.",
+                    root_id=thread_id
+                )
+            except:
+                # Если даже отправка сообщения об ошибке не удалась
+                logger.error("❌ Критическая ошибка: не удалось отправить сообщение об ошибке")
     
     async def _get_thread_messages(self, thread_id: str) -> List[Dict[str, Any]]:
         """Получает все сообщения треда"""
