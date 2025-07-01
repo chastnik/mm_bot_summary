@@ -198,19 +198,25 @@ def create_app(bot) -> FastAPI:
             
             <div class="instructions">
                 <h3>📋 Инструкции по использованию</h3>
+                <p><strong>Как использовать:</strong></p>
                 <ol>
-                    <li>Добавьте бота в канал: <span class="code">/invite @{status.get('bot_username', 'summary-bot')}</span></li>
-                    <li>В треде напишите команду: <span class="code">/summary</span></li>
+                    <li>Добавьте бота в канал: <span class="code">/invite @summary_bot</span></li>
+                    <li>В треде напишите команду: <span class="code">!summary</span></li>
                     <li>Подождите несколько секунд - бот создаст саммари треда</li>
                     <li>Получите структурированное резюме обсуждения!</li>
                 </ol>
                 
                 <p><strong>Поддерживаемые команды:</strong></p>
                 <ul>
-                    <li><span class="code">/summary</span> - основная команда</li>
-                    <li><span class="code">!summary</span> - альтернативный вариант</li>
+                    <li><span class="code">!summary</span> - основная команда</li>
+                    <li><span class="code">summary</span> - простая команда</li>
                     <li><span class="code">саммари</span> - на русском языке</li>
+                    <li><span class="code">!саммари</span> - русская с восклицательным знаком</li>
                 </ul>
+                
+                <div class="warning" style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 8px; margin: 15px 0;">
+                    <strong>⚠️ Важно:</strong> Команды с <code>/</code> (например <code>/summary</code>) зарезервированы в Mattermost для системных слэш-команд. Используйте команды с <code>!</code> или без символов.
+                </div>
             </div>
             
             <div class="instructions">
@@ -339,11 +345,10 @@ def create_app(bot) -> FastAPI:
                     "REST API для интеграции"
                 ],
                 "supported_commands": [
-                    "/summary",
-                    "!summary", 
-                    "summary",
+                    "!summary",
+                    "summary", 
                     "саммари",
-                    "/саммари"
+                    "!саммари"
                 ],
                 "bot_info": {
                     "username": status.get('bot_username'),
