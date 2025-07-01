@@ -2,6 +2,7 @@ import asyncio
 import logging
 import requests
 import json
+import re
 from typing import List, Dict, Any
 from config import Config
 
@@ -89,6 +90,22 @@ class LLMClient:
             logger.error(f"Ошибка при генерации саммари: {e}")
             return "❌ Не удалось создать саммари. Попробуйте позже."
     
+    def _clean_response(self, content: str) -> str:
+        """Очищает ответ от thinking-блоков и лишнего форматирования"""
+        if not content:
+            return content
+        
+        # Удаляем thinking-блоки
+        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+        
+        # Удаляем лишние пустые строки
+        content = re.sub(r'\n\s*\n\s*\n', '\n\n', content)
+        
+        # Убираем пробелы в начале и конце
+        content = content.strip()
+        
+        return content
+    
     async def _send_request(self, payload: dict) -> str:
         """Отправляет запрос к корпоративной LLM"""
         try:
@@ -114,8 +131,10 @@ class LLMClient:
                 content = response_data.get('message', {}).get('content', '')
                 
                 if content:
-                    logger.info(f"✅ Получен ответ от LLM ({len(content)} символов)")
-                    return content.strip()
+                    # Очищаем ответ от thinking-блоков
+                    cleaned_content = self._clean_response(content)
+                    logger.info(f"✅ Получен ответ от LLM ({len(content)} символов, после очистки: {len(cleaned_content)} символов)")
+                    return cleaned_content
                 else:
                     logger.warning("⚠️ Получен пустой ответ от LLM")
                     return ""
