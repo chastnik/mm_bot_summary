@@ -90,9 +90,9 @@ MATTERMOST_URL=https://your-mattermost-server.com
 MATTERMOST_TOKEN=your-bot-token-here
 
 # LLM настройки (корпоративная LLM)
-LLM_PROXY_TOKEN=8d10b6d4-2e40-42fc-a66a-c9c6bf20c92c
-LLM_BASE_URL=https://llm.1bitai.ru
-LLM_MODEL=qwen3:14b
+LLM_PROXY_TOKEN=token
+LLM_BASE_URL=llm_url
+LLM_MODEL=model_name
 
 # Настройки бота
 BOT_PORT=8080

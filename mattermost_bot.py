@@ -207,7 +207,12 @@ class MattermostBot:
                 async for message in websocket:
                     if not self._running:
                         break
-                    await self._handle_websocket_message(message)
+                    # Обрабатываем разные типы сообщений WebSocket
+                    if isinstance(message, bytes):
+                        message_str = message.decode()
+                    else:
+                        message_str = str(message)
+                    await self._handle_websocket_message(message_str)
                     
         except websockets.exceptions.ConnectionClosed:
             logger.warning("⚠️ WebSocket соединение закрыто")
@@ -217,6 +222,9 @@ class MattermostBot:
     
     async def _authenticate_websocket(self):
         """Аутентификация WebSocket соединения"""
+        if self._websocket is None:
+            raise Exception("WebSocket соединение не установлено")
+            
         auth_message = {
             "seq": 1,
             "action": "authentication_challenge",
@@ -586,11 +594,20 @@ class MattermostBot:
     
     async def health_check(self) -> Dict[str, Any]:
         """Проверка состояния бота"""
+        # Безопасная проверка WebSocket соединения
+        websocket_connected = False
+        if self._websocket is not None:
+            try:
+                # Проверяем, что соединение открыто
+                websocket_connected = not getattr(self._websocket, 'closed', True)
+            except:
+                websocket_connected = False
+        
         status = {
             'mattermost_connected': False,
             'llm_connected': False,
             'bot_running': self._running,
-            'websocket_connected': self._websocket is not None and hasattr(self._websocket, 'closed') and not self._websocket.closed,
+            'websocket_connected': websocket_connected,
             'bot_username': self.bot_username,
             'bot_user_id': self.bot_user_id
         }

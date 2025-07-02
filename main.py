@@ -78,8 +78,13 @@ class BotApplication:
     async def _run_web_server(self):
         """Запуск веб-сервера"""
         try:
+            if self.web_app is None:
+                logger.error("❌ Веб-приложение не инициализировано")
+                await self.shutdown()
+                return
+                
             config = uvicorn.Config(
-                self.web_app,
+                app=self.web_app,  # Явно указываем имя параметра
                 host="0.0.0.0",
                 port=Config.BOT_PORT,
                 log_level="warning",  # Снижаем уровень логирования uvicorn
