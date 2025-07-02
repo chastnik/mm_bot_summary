@@ -39,9 +39,9 @@ MATTERMOST_URL=https://your-server.com
 MATTERMOST_TOKEN=your-bot-token
 
 # LLM (корпоративная)
-LLM_PROXY_TOKEN=8d10b6d4-2e40-42fc-a66a-c9c6bf20c92c
-LLM_BASE_URL=https://llm.1bitai.ru
-LLM_MODEL=qwen3:14b
+LLM_PROXY_TOKEN=token
+LLM_BASE_URL=llm_url
+LLM_MODEL=model
 ```
 
 ## Команды бота
