@@ -62,6 +62,13 @@ class SubscriptionManager:
                     )
                 ''')
                 
+                # Миграция: добавляем столбец delivered_at если его нет
+                cursor.execute("PRAGMA table_info(delivery_log)")
+                log_columns = [column[1] for column in cursor.fetchall()]
+                if 'delivered_at' not in log_columns:
+                    cursor.execute('ALTER TABLE delivery_log ADD COLUMN delivered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+                    logger.info("✅ Добавлен столбец delivered_at в таблицу delivery_log")
+                
                 conn.commit()
                 logger.info("✅ База данных подписок инициализирована")
                 
