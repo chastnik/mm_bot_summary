@@ -1069,7 +1069,7 @@ class MattermostBot:
 **Примеры:**
 ```
 ~general, ~random ежедневно в 9 утра
-~development, ~qa каждую неделю в 18:00
+~development, ~qa каждую неделю по средам в 18:00
 ~marketing каждый день в 15:30
 ```
 
