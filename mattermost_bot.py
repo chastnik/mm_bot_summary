@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 Mattermost Summary Bot
-Основанный на лучших практиках из reference проектов
 """
 
 import asyncio
@@ -346,6 +345,12 @@ class MattermostBot:
                 await self._handle_direct_message(channel_id, message, user_id)
                 return
             
+            # Проверяем упоминания бота в каналах
+            if self._is_bot_mentioned(message):
+                logger.info(f"📝 Получена команда с упоминанием бота в канале {channel_id}")
+                await self._handle_bot_mention_command(channel_id, message, user_id, root_id, post_id)
+                return
+            
             # Логируем только команды саммари в каналах
             if self._is_summary_command(message):
                 logger.info(f"📝 Получена команда /summary в канале {channel_id}")
@@ -456,6 +461,453 @@ class MattermostBot:
         
         message_lower = message.lower()
         return any(re.match(pattern, message_lower) for pattern in patterns)
+    
+    def _is_bot_mentioned(self, message: str) -> bool:
+        """Проверяет, упоминается ли бот в сообщении"""
+        if not self.bot_username:
+            return False
+        
+        # Проверяем упоминания через @username
+        mention_patterns = [
+            f'@{self.bot_username}',
+            f'@summary-bot',  # Обычное имя бота
+            f'@summary_bot',  # Альтернативное имя
+        ]
+        
+        message_lower = message.lower()
+        return any(mention in message_lower for mention in mention_patterns)
+    
+    async def _handle_bot_mention_command(self, channel_id: str, message: str, user_id: str, root_id: str, post_id: str):
+        """Обработка команд с упоминанием бота"""
+        try:
+            # Проверяем разрешения в канале
+            if not await self._check_channel_permissions(channel_id):
+                logger.warning(f"⚠️ Нет разрешений для ответа в канале {channel_id}")
+                return
+            
+            # Удаляем упоминание бота из сообщения для анализа команды
+            cleaned_message = self._remove_bot_mention(message)
+            
+            # Определяем тип команды
+            if self._is_help_command(cleaned_message):
+                await self._send_bot_help(channel_id, root_id)
+            elif self._is_thread_summary_command(cleaned_message):
+                await self._handle_thread_summary_by_id(channel_id, cleaned_message, root_id)
+            elif self._is_channel_summary_command(cleaned_message):
+                await self._handle_channel_summary_command(channel_id, cleaned_message, root_id)
+            elif self._is_search_command(cleaned_message):
+                await self._handle_search_command(channel_id, cleaned_message, root_id)
+            else:
+                # Если команда не распознана, показываем справку
+                await self._send_bot_help(channel_id, root_id)
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка обработки команды с упоминанием бота: {e}")
+    
+    def _remove_bot_mention(self, message: str) -> str:
+        """Убирает упоминание бота из сообщения"""
+        if not self.bot_username:
+            return message
+        
+        # Паттерны для удаления упоминаний
+        mention_patterns = [
+            f'@{self.bot_username}',
+            '@summary-bot',
+            '@summary_bot'
+        ]
+        
+        cleaned = message
+        for pattern in mention_patterns:
+            cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+        
+        return cleaned.strip()
+    
+    def _is_thread_summary_command(self, message: str) -> bool:
+        """Проверяет, является ли команда запросом саммари треда по ID"""
+        # Проверяем наличие ID треда (26 символов в Mattermost)
+        thread_id_pattern = r'[a-zA-Z0-9]{26}'
+        return bool(re.search(thread_id_pattern, message))
+    
+    def _is_channel_summary_command(self, message: str) -> bool:
+        """Проверяет, является ли команда запросом саммари канала"""
+        message_lower = message.lower()
+        keywords = ['канал', 'channel', 'за', 'for', '24', 'часа', 'hour', 'неделю', 'week', 'день', 'day']
+        return any(keyword in message_lower for keyword in keywords)
+    
+    def _is_search_command(self, message: str) -> bool:
+        """Проверяет, является ли команда поиском"""
+        message_lower = message.lower()
+        search_keywords = ['найди', 'найти', 'search', 'поиск', 'ищи']
+        return any(keyword in message_lower for keyword in search_keywords)
+    
+    def _is_help_command(self, message: str) -> bool:
+        """Проверяет, является ли команда запросом справки"""
+        message_lower = message.lower().strip()
+        help_keywords = ['help', 'справка', 'помощь', 'команды']
+        return not message_lower or any(keyword in message_lower for keyword in help_keywords)
+    
+    async def _handle_thread_summary_by_id(self, channel_id: str, message: str, root_id: str):
+        """Обработка команды саммари треда по ID"""
+        try:
+            # Извлекаем ID треда из сообщения
+            thread_id_match = re.search(r'[a-zA-Z0-9]{26}', message)
+            if not thread_id_match:
+                await self._send_message(
+                    channel_id,
+                    "❌ Не удалось найти ID треда в сообщении.",
+                    root_id=root_id
+                )
+                return
+            
+            thread_id = thread_id_match.group(0)
+            
+            # Отправляем уведомление о начале обработки
+            await self._send_message(
+                channel_id,
+                f"🔄 Создаю саммари треда {thread_id}... Это может занять несколько секунд.",
+                root_id=root_id
+            )
+            
+            # Получаем сообщения треда
+            thread_messages = await self._get_thread_messages(thread_id)
+            
+            if not thread_messages:
+                await self._send_message(
+                    channel_id,
+                    f"❌ Не удалось получить сообщения треда {thread_id} или тред пустой.",
+                    root_id=root_id
+                )
+                return
+            
+            # Проверяем минимальное количество сообщений
+            if len(thread_messages) < 2:
+                await self._send_message(
+                    channel_id,
+                    f"📝 В треде {thread_id} недостаточно сообщений для создания саммари (минимум 2 сообщения).",
+                    root_id=root_id
+                )
+                return
+            
+            # Генерируем саммари
+            summary = await self.llm_client.generate_thread_summary(thread_messages)
+            
+            if summary:
+                await self._send_message(
+                    channel_id,
+                    f"📋 **Саммари треда {thread_id}:**\n\n{summary}",
+                    root_id=root_id
+                )
+            else:
+                await self._send_message(
+                    channel_id,
+                    f"❌ Не удалось создать саммари треда {thread_id}. Попробуйте позже.",
+                    root_id=root_id
+                )
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка обработки саммари треда по ID: {e}")
+            await self._send_message(
+                channel_id,
+                "❌ Произошла ошибка при создании саммари треда.",
+                root_id=root_id
+            )
+    
+    async def _handle_channel_summary_command(self, channel_id: str, message: str, root_id: str):
+        """Обработка команды саммари канала"""
+        try:
+            await self._send_message(
+                channel_id,
+                "🔄 Создаю саммари канала... Это может занять несколько секунд.",
+                root_id=root_id
+            )
+            
+            # Определяем период для саммари
+            hours = self._parse_time_period(message)
+            
+            # Получаем сообщения канала за указанный период
+            channel_messages = await self._get_channel_messages_by_period(channel_id, hours)
+            
+            if not channel_messages:
+                await self._send_message(
+                    channel_id,
+                    f"❌ Не найдено сообщений в канале за последние {hours} часов.",
+                    root_id=root_id
+                )
+                return
+            
+            # Проверяем минимальное количество сообщений
+            if len(channel_messages) < 3:
+                await self._send_message(
+                    channel_id,
+                    f"📝 В канале недостаточно сообщений за последние {hours} часов для создания саммари (минимум 3 сообщения).",
+                    root_id=root_id
+                )
+                return
+            
+            # Генерируем саммари канала
+            summary = await self.llm_client.generate_channel_summary(channel_messages)
+            
+            if summary:
+                period_text = self._format_period_text(hours)
+                await self._send_message(
+                    channel_id,
+                    f"📋 **Саммари канала {period_text}:**\n\n{summary}",
+                    root_id=root_id
+                )
+            else:
+                await self._send_message(
+                    channel_id,
+                    "❌ Не удалось создать саммари канала. Попробуйте позже.",
+                    root_id=root_id
+                )
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка обработки саммари канала: {e}")
+            await self._send_message(
+                channel_id,
+                "❌ Произошла ошибка при создании саммари канала.",
+                root_id=root_id
+            )
+    
+    async def _handle_search_command(self, channel_id: str, message: str, root_id: str):
+        """Обработка команды поиска"""
+        try:
+            # Извлекаем поисковый запрос
+            search_query = self._extract_search_query(message)
+            
+            if not search_query:
+                await self._send_message(
+                    channel_id,
+                    "❌ Не удалось определить поисковый запрос. Используйте формат: `@summary-bot найди [запрос] в канале`",
+                    root_id=root_id
+                )
+                return
+            
+            await self._send_message(
+                channel_id,
+                f"🔍 Ищу '{search_query}' в канале...",
+                root_id=root_id
+            )
+            
+            # Получаем недавние сообщения канала для поиска
+            channel_messages = await self._get_channel_messages_by_period(channel_id, 24 * 7)  # За неделю
+            
+            if not channel_messages:
+                await self._send_message(
+                    channel_id,
+                    "❌ Не найдено сообщений в канале для поиска.",
+                    root_id=root_id
+                )
+                return
+            
+            # Ищем релевантные сообщения
+            relevant_messages = self._search_messages(channel_messages, search_query)
+            
+            if not relevant_messages:
+                await self._send_message(
+                    channel_id,
+                    f"❌ Не найдено сообщений по запросу '{search_query}'.",
+                    root_id=root_id
+                )
+                return
+            
+            # Формируем результат поиска
+            search_result = self._format_search_results(relevant_messages, search_query)
+            
+            await self._send_message(
+                channel_id,
+                f"🔍 **Результаты поиска '{search_query}':**\n\n{search_result}",
+                root_id=root_id
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка обработки поиска: {e}")
+            await self._send_message(
+                channel_id,
+                "❌ Произошла ошибка при выполнении поиска.",
+                root_id=root_id
+            )
+    
+    async def _send_bot_help(self, channel_id: str, root_id: str):
+        """Отправляет справку по командам бота"""
+        try:
+            help_text = f"""
+🤖 **Доступные команды:**
+
+**📋 Саммари тредов:**
+• `!summary` или `summary` - создать саммари текущего треда
+• `@{self.bot_username} [ID_треда]` - создать саммари треда по ID
+
+**📊 Саммари канала:**
+• `@{self.bot_username} канал за 24 часа` - саммари за день
+• `@{self.bot_username} канал за неделю` - саммари за неделю
+
+**🔍 Поиск:**
+• `@{self.bot_username} найди [запрос] в канале` - поиск по сообщениям канала
+
+💡 **Для работы с подписками напишите мне в личные сообщения!**
+"""
+            
+            await self._send_message(channel_id, help_text, root_id=root_id)
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка отправки справки: {e}")
+    
+    def _parse_time_period(self, message: str) -> int:
+        """Парсит период времени из сообщения (возвращает количество часов)"""
+        message_lower = message.lower()
+        
+        if any(word in message_lower for word in ['24', 'день', 'day', 'сутки']):
+            return 24
+        elif any(word in message_lower for word in ['неделю', 'week', '7']):
+            return 24 * 7
+        elif any(word in message_lower for word in ['час', 'hour']):
+            # Попытка извлечь конкретное число часов
+            import re
+            hour_match = re.search(r'(\d+)\s*час', message_lower)
+            if hour_match:
+                return int(hour_match.group(1))
+            return 1
+        else:
+            return 24  # По умолчанию 24 часа
+    
+    def _format_period_text(self, hours: int) -> str:
+        """Форматирует текст периода"""
+        if hours == 24:
+            return "за последние 24 часа"
+        elif hours == 24 * 7:
+            return "за последнюю неделю"
+        elif hours == 1:
+            return "за последний час"
+        else:
+            return f"за последние {hours} часов"
+    
+    def _extract_search_query(self, message: str) -> str:
+        """Извлекает поисковый запрос из сообщения"""
+        message_lower = message.lower()
+        
+        # Ищем паттерны поиска
+        search_patterns = [
+            r'найди\s+(.+?)\s+в\s+канале',
+            r'найти\s+(.+?)\s+в\s+канале', 
+            r'search\s+(.+?)\s+in\s+channel',
+            r'найди\s+(.+)',
+            r'найти\s+(.+)',
+            r'search\s+(.+)'
+        ]
+        
+        for pattern in search_patterns:
+            match = re.search(pattern, message_lower)
+            if match:
+                return match.group(1).strip()
+        
+        return ""
+    
+    def _search_messages(self, messages: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
+        """Ищет сообщения по запросу"""
+        query_lower = query.lower()
+        relevant_messages = []
+        
+        for msg in messages:
+            message_text = msg.get('message', '').lower()
+            if query_lower in message_text:
+                relevant_messages.append(msg)
+        
+        # Сортируем по времени (новые сначала) и ограничиваем количество
+        relevant_messages.sort(key=lambda x: x.get('create_at', 0), reverse=True)
+        return relevant_messages[:10]  # Максимум 10 результатов
+    
+    def _format_search_results(self, messages: List[Dict[str, Any]], query: str) -> str:
+        """Форматирует результаты поиска"""
+        if not messages:
+            return f"Ничего не найдено по запросу '{query}'"
+        
+        results = []
+        for i, msg in enumerate(messages, 1):
+            username = msg.get('username', 'Неизвестный')
+            message_text = msg.get('message', '')
+            
+            # Обрезаем длинные сообщения
+            if len(message_text) > 200:
+                message_text = message_text[:200] + "..."
+            
+            results.append(f"{i}. **{username}:** {message_text}")
+        
+        return "\n\n".join(results)
+    
+    async def _get_channel_messages_by_period(self, channel_id: str, hours: int) -> List[Dict[str, Any]]:
+        """Получает сообщения канала за указанный период"""
+        try:
+            # Вычисляем временные границы
+            from datetime import datetime, timedelta
+            import pytz
+            
+            now = datetime.now(pytz.UTC)
+            since_timestamp = int((now - timedelta(hours=hours)).timestamp() * 1000)
+            
+            # Получаем сообщения канала
+            response = self._session_requests.get(
+                f"{self.base_url}/api/v4/channels/{channel_id}/posts",
+                params={
+                    'since': since_timestamp,
+                    'per_page': 200
+                },
+                timeout=10
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"❌ Ошибка получения сообщений канала: {response.status_code}")
+                return []
+            
+            data = response.json()
+            posts = data.get('posts', {})
+            order = data.get('order', [])
+            
+            # Кеш для пользователей
+            user_cache = {}
+            messages = []
+            
+            for post_id in order:
+                if post_id in posts:
+                    post = posts[post_id]
+                    user_id = post.get('user_id')
+                    
+                    # Пропускаем сообщения от самого бота
+                    if user_id == self.bot_user_id:
+                        continue
+                    
+                    # Получаем имя пользователя
+                    if user_id not in user_cache:
+                        try:
+                            user_response = self._session_requests.get(
+                                f"{self.base_url}/api/v4/users/{user_id}",
+                                timeout=5
+                            )
+                            if user_response.status_code == 200:
+                                user_data = user_response.json()
+                                user_cache[user_id] = user_data.get('username', 'Неизвестный')
+                            else:
+                                user_cache[user_id] = 'Неизвестный'
+                        except:
+                            user_cache[user_id] = 'Неизвестный'
+                    
+                    username = user_cache[user_id]
+                    
+                    messages.append({
+                        'username': username,
+                        'message': post.get('message', ''),
+                        'create_at': post.get('create_at', 0),
+                        'user_id': user_id
+                    })
+            
+            # Сортируем по времени
+            messages.sort(key=lambda x: x.get('create_at', 0))
+            
+            return messages
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения сообщений канала за период: {e}")
+            return []
     
     async def _handle_summary_command(self, channel_id: str, thread_id: str, message_id: str):
         """Обработка команды создания саммари"""
