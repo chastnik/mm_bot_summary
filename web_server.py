@@ -19,11 +19,48 @@ def create_app(bot) -> FastAPI:
         version="2.0.0"
     )
     
+    def _generate_subscriptions_html(subscriptions_info):
+        """Генерирует HTML для отображения подписок"""
+        if not subscriptions_info:
+            return """
+            <div style="text-align: center; color: #666; font-style: italic; padding: 20px;">
+                Нет активных подписок
+            </div>
+            """
+        
+        html_parts = []
+        for sub in subscriptions_info:
+            channels = ", ".join(sub['channels'])
+            freq_text = "ежедневно" if sub['frequency'] == 'daily' else "еженедельно"
+            
+            html_parts.append(f"""
+            <div style="background: #f8f9fa; border-radius: 8px; padding: 15px; margin: 10px 0; border-left: 4px solid #28a745;">
+                <div style="font-weight: bold; color: #333; margin-bottom: 8px;">
+                    👤 {sub['username']}
+                </div>
+                <div style="color: #666; margin-bottom: 5px;">
+                    📢 Каналы: {channels}
+                </div>
+                <div style="color: #666; margin-bottom: 5px;">
+                    ⏰ Время: {sub['schedule_time']} ({freq_text})
+                </div>
+                <div style="color: #999; font-size: 0.9em;">
+                    📅 Создано: {sub['created_at'][:10]}
+                </div>
+            </div>
+            """)
+        
+        return "".join(html_parts)
+    
     @app.get("/", response_class=HTMLResponse)
     async def dashboard():
         """Главная страница с дашбордом"""
         try:
             status = await bot.health_check()
+            
+            # Получаем информацию о подписках
+            subscriptions_info = bot.subscription_manager.get_all_subscriptions()
+            total_subscriptions = len(subscriptions_info)
             
             # Определяем статусы для отображения
             mattermost_status = "🟢 Подключен" if status.get('mattermost_connected') else "🔴 Отключен"
@@ -194,6 +231,15 @@ def create_app(bot) -> FastAPI:
                     <h3>🧠 LLM</h3>
                     <div class="status-value">{llm_status}</div>
                 </div>
+                <div class="status-card">
+                    <h3>📊 Подписки</h3>
+                    <div class="status-value">{total_subscriptions} активных</div>
+                </div>
+            </div>
+            
+            <div class="instructions">
+                <h3>📊 Активные подписки</h3>
+                {_generate_subscriptions_html(subscriptions_info)}
             </div>
             
             <div class="instructions">
@@ -206,12 +252,26 @@ def create_app(bot) -> FastAPI:
                     <li>Получите структурированное резюме обсуждения!</li>
                 </ol>
                 
-                <p><strong>Поддерживаемые команды:</strong></p>
+                <p><strong>Команды в каналах:</strong></p>
                 <ul>
                     <li><span class="code">!summary</span> - основная команда</li>
                     <li><span class="code">summary</span> - простая команда</li>
                     <li><span class="code">саммари</span> - на русском языке</li>
                     <li><span class="code">!саммари</span> - русская с восклицательным знаком</li>
+                </ul>
+                
+                <p><strong>Подписки на каналы:</strong></p>
+                <ol>
+                    <li>Напишите боту в личное сообщение</li>
+                    <li>Создайте подписку в формате: <span class="code">general,random ~ 09:00 ~ daily</span></li>
+                    <li>Получайте сводки в личные сообщения по расписанию</li>
+                </ol>
+                
+                <p><strong>Команды управления подписками (в личных сообщениях):</strong></p>
+                <ul>
+                    <li><span class="code">подписки</span> - посмотреть текущие подписки</li>
+                    <li><span class="code">удалить подписку</span> - удалить все подписки</li>
+                    <li><span class="code">создать подписку</span> - получить инструкцию</li>
                 </ul>
                 
                 <div class="warning" style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 8px; margin: 15px 0;">
@@ -230,6 +290,9 @@ def create_app(bot) -> FastAPI:
                     </a>
                     <a href="/info" class="api-link">
                         ℹ️ Информация о боте
+                    </a>
+                    <a href="/subscriptions" class="api-link">
+                        📊 Подписки (JSON)
                     </a>
                     <a href="/docs" class="api-link">
                         📚 API Документация
@@ -360,11 +423,28 @@ def create_app(bot) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
     
+    @app.get("/subscriptions")
+    async def subscriptions():
+        """Получение информации о подписках"""
+        try:
+            all_subscriptions = bot.subscription_manager.get_all_subscriptions()
+            
+            return {
+                "total_subscriptions": len(all_subscriptions),
+                "subscriptions": all_subscriptions,
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    
     @app.get("/metrics")
     async def metrics():
         """Метрики для мониторинга"""
         try:
             status = await bot.health_check()
+            
+            # Получаем информацию о подписках
+            subscriptions_count = len(bot.subscription_manager.get_all_subscriptions())
             
             # Простые метрики в формате, совместимом с Prometheus
             metrics = []
@@ -372,6 +452,7 @@ def create_app(bot) -> FastAPI:
             metrics.append(f"mattermost_connected {1 if status.get('mattermost_connected') else 0}")
             metrics.append(f"websocket_connected {1 if status.get('websocket_connected') else 0}")
             metrics.append(f"llm_connected {1 if status.get('llm_connected') else 0}")
+            metrics.append(f"total_subscriptions {subscriptions_count}")
             
             return "\n".join(metrics)
         except Exception as e:

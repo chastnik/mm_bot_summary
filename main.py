@@ -11,6 +11,7 @@ import sys
 from config import Config
 from mattermost_bot import MattermostBot
 from web_server import create_app
+from scheduler import SubscriptionScheduler
 import uvicorn
 
 # Настройка логирования
@@ -26,6 +27,7 @@ class BotApplication:
     
     def __init__(self):
         self.bot = MattermostBot()
+        self.scheduler = SubscriptionScheduler(self.bot, self.bot.subscription_manager)
         self.web_app = None
         self.tasks = []
         self._shutdown = False
@@ -42,6 +44,9 @@ class BotApplication:
             
             # Создаем веб-приложение с ботом
             self.web_app = create_app(self.bot)
+            
+            # Запускаем планировщик подписок
+            await self.scheduler.start()
             
             # Запускаем задачи параллельно
             tasks = [
@@ -117,6 +122,12 @@ class BotApplication:
         
         self._shutdown = True
         logger.info("🛑 Начинаю корректное завершение работы...")
+        
+        # Останавливаем планировщик
+        try:
+            await self.scheduler.stop()
+        except Exception as e:
+            logger.error(f"❌ Ошибка при остановке планировщика: {e}")
         
         # Останавливаем бота
         try:

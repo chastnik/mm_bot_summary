@@ -12,11 +12,13 @@ import requests
 import websockets
 import ssl
 import time
+from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from urllib.parse import urlparse
 
 from config import Config
 from llm_client import LLMClient
+from subscription_manager import SubscriptionManager
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,7 @@ class MattermostBot:
         self.bot_user_id = None
         self.bot_username = None
         self.llm_client = LLMClient()
+        self.subscription_manager = SubscriptionManager()
         self._running = False
         self._websocket = None
         self._session_requests = requests.Session()
@@ -300,9 +303,15 @@ class MattermostBot:
             message = post.get('message', '').strip()
             channel_id = post.get('channel_id')
             post_id = post.get('id')
+            user_id = post.get('user_id')
             root_id = post.get('root_id') or post_id  # ID треда или самого поста
             
-            # Логируем только команды
+            # Проверяем, является ли это личным сообщением
+            if self._is_direct_message(channel_id):
+                await self._handle_direct_message(channel_id, message, user_id)
+                return
+            
+            # Логируем только команды саммари в каналах
             if self._is_summary_command(message):
                 logger.info(f"📝 Получена команда /summary в канале {channel_id}")
                 await self._handle_summary_command(channel_id, root_id, post_id)
@@ -629,4 +638,479 @@ class MattermostBot:
         except:
             status['llm_connected'] = False
         
-        return status 
+        return status
+    
+    async def get_channel_by_name(self, channel_name: str) -> Optional[Dict[str, Any]]:
+        """Получение информации о канале по имени"""
+        try:
+            # Убираем ~ в начале если есть
+            clean_channel_name = channel_name.lstrip('~')
+            
+            # Получаем информацию о канале
+            response = self._session_requests.get(
+                f"{self.base_url}/api/v4/channels/name/{clean_channel_name}",
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.warning(f"⚠️ Канал {channel_name} не найден: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения канала {channel_name}: {e}")
+            return None
+    
+    async def get_channel_messages_since(self, channel_id: str, since_time: datetime) -> List[Dict[str, Any]]:
+        """Получение сообщений из канала с определенного времени"""
+        try:
+            # Конвертируем время в миллисекунды (формат Mattermost)
+            since_timestamp = int(since_time.timestamp() * 1000)
+            
+            # Получаем сообщения из канала
+            response = self._session_requests.get(
+                f"{self.base_url}/api/v4/channels/{channel_id}/posts",
+                params={
+                    'since': since_timestamp,
+                    'per_page': 200  # Максимум сообщений
+                },
+                timeout=30
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"❌ Ошибка получения сообщений канала {channel_id}: {response.status_code}")
+                return []
+            
+            posts_data = response.json()
+            posts = posts_data.get('posts', {})
+            order = posts_data.get('order', [])
+            
+            # Кешируем пользователей
+            user_cache = {}
+            messages = []
+            
+            for post_id in order:
+                if post_id in posts:
+                    post = posts[post_id]
+                    user_id = post.get('user_id')
+                    
+                    # Пропускаем сообщения от самого бота
+                    if user_id == self.bot_user_id:
+                        continue
+                    
+                    # Получаем имя пользователя (с кешированием)
+                    if user_id not in user_cache:
+                        try:
+                            user_response = self._session_requests.get(
+                                f"{self.base_url}/api/v4/users/{user_id}",
+                                timeout=5
+                            )
+                            if user_response.status_code == 200:
+                                user_data = user_response.json()
+                                user_cache[user_id] = user_data.get('username', 'Неизвестный')
+                            else:
+                                user_cache[user_id] = 'Неизвестный'
+                        except:
+                            user_cache[user_id] = 'Неизвестный'
+                    
+                    username = user_cache[user_id]
+                    
+                    # Получаем информацию о канале для названия
+                    channel_name = None
+                    try:
+                        channel_response = self._session_requests.get(
+                            f"{self.base_url}/api/v4/channels/{channel_id}",
+                            timeout=5
+                        )
+                        if channel_response.status_code == 200:
+                            channel_data = channel_response.json()
+                            channel_name = channel_data.get('name', 'unknown')
+                    except:
+                        channel_name = 'unknown'
+                    
+                    messages.append({
+                        'username': username,
+                        'message': post.get('message', ''),
+                        'create_at': post.get('create_at', 0),
+                        'user_id': user_id,
+                        'channel_name': channel_name
+                    })
+            
+            # Сортируем по времени создания
+            messages.sort(key=lambda x: x.get('create_at', 0))
+            
+            return messages
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения сообщений канала {channel_id}: {e}")
+            return []
+    
+    async def send_direct_message(self, user_id: str, message: str) -> bool:
+        """Отправка личного сообщения пользователю"""
+        try:
+            # Создаем или получаем канал прямых сообщений
+            dm_channel = await self._get_or_create_dm_channel(user_id)
+            if not dm_channel:
+                logger.error(f"❌ Не удалось создать канал прямых сообщений с {user_id}")
+                return False
+            
+            # Отправляем сообщение
+            return await self._send_message(dm_channel['id'], message)
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка отправки личного сообщения: {e}")
+            return False
+    
+    async def _get_or_create_dm_channel(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Получение или создание канала прямых сообщений"""
+        try:
+            # Попытка создать канал прямых сообщений
+            response = self._session_requests.post(
+                f"{self.base_url}/api/v4/channels/direct",
+                json=[self.bot_user_id, user_id],
+                timeout=10
+            )
+            
+            if response.status_code == 200 or response.status_code == 201:
+                return response.json()
+            else:
+                logger.error(f"❌ Ошибка создания канала прямых сообщений: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения канала прямых сообщений: {e}")
+            return None
+    
+    def _is_direct_message(self, channel_id: str) -> bool:
+        """Проверяет, является ли канал личным сообщением"""
+        try:
+            # Получаем информацию о канале
+            response = self._session_requests.get(
+                f"{self.base_url}/api/v4/channels/{channel_id}",
+                timeout=5
+            )
+            
+            if response.status_code == 200:
+                channel_data = response.json()
+                return channel_data.get('type') == 'D'  # D = Direct message
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка проверки типа канала: {e}")
+            return False
+    
+    async def _handle_direct_message(self, channel_id: str, message: str, user_id: str):
+        """Обработка личных сообщений"""
+        try:
+            # Получаем информацию о пользователе
+            user_response = self._session_requests.get(
+                f"{self.base_url}/api/v4/users/{user_id}",
+                timeout=5
+            )
+            
+            username = "Неизвестный"
+            if user_response.status_code == 200:
+                user_data = user_response.json()
+                username = user_data.get('username', 'Неизвестный')
+            
+            logger.info(f"📨 Получено личное сообщение от {username}: {message}")
+            
+            # Проверяем команды управления подписками
+            if await self._handle_subscription_commands(channel_id, message, user_id, username):
+                return
+            
+            # Для любого другого сообщения отправляем инструкцию
+            await self._send_help_message(channel_id)
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка обработки личного сообщения: {e}")
+    
+    async def _handle_subscription_commands(self, channel_id: str, message: str, 
+                                         user_id: str, username: str) -> bool:
+        """Обработка команд управления подписками"""
+        try:
+            message_lower = message.lower().strip()
+            
+            if message_lower in ['подписки', 'мои подписки', 'посмотреть подписки']:
+                await self._show_subscriptions(channel_id, user_id)
+                return True
+            
+            elif message_lower in ['удалить подписку', 'удалить подписки', 'отписаться']:
+                await self._delete_subscription(channel_id, user_id)
+                return True
+            
+            elif message_lower.startswith('создать подписку'):
+                await self._create_subscription_dialog(channel_id, user_id, username, message)
+                return True
+            
+            elif '~' in message and any(word in message_lower for word in ['время', 'день', 'неделя', ':']):
+                # Попытка создания подписки в формате: канал1,канал2 ~ время ~ частота
+                await self._parse_subscription_command(channel_id, user_id, username, message)
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка обработки команды подписки: {e}")
+            return False
+    
+    async def _show_subscriptions(self, channel_id: str, user_id: str):
+        """Показать текущие подписки пользователя"""
+        try:
+            subscriptions = self.subscription_manager.get_user_subscriptions(user_id)
+            
+            if not subscriptions:
+                message = """
+📋 **Ваши подписки**
+
+У вас пока нет активных подписок.
+
+**Чтобы создать подписку:**
+Отправьте сообщение в формате:
+```
+канал1,канал2 ~ 09:00 ~ daily
+```
+
+**Пример:**
+```
+general,random ~ 09:00 ~ daily
+```
+
+**Частота:**
+• `daily` - ежедневно
+• `weekly` - еженедельно (по понедельникам)
+"""
+            else:
+                lines = ["📋 **Ваши подписки**\n"]
+                
+                for i, sub in enumerate(subscriptions, 1):
+                    channels = ", ".join(sub['channels'])
+                    freq_text = "ежедневно" if sub['frequency'] == 'daily' else "еженедельно"
+                    
+                    lines.append(f"**{i}.** Каналы: {channels}")
+                    lines.append(f"   Время: {sub['schedule_time']}")
+                    lines.append(f"   Частота: {freq_text}")
+                    lines.append(f"   Создано: {sub['created_at'][:10]}")
+                    lines.append("")
+                
+                lines.append("**Управление подписками:**")
+                lines.append("• `удалить подписку` - удалить все подписки")
+                lines.append("• `создать подписку` - создать новую подписку")
+                
+                message = "\n".join(lines)
+            
+            await self._send_message(channel_id, message)
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка показа подписок: {e}")
+    
+    async def _delete_subscription(self, channel_id: str, user_id: str):
+        """Удаление подписки пользователя"""
+        try:
+            success = self.subscription_manager.delete_subscription(user_id)
+            
+            if success:
+                message = """
+✅ **Подписки удалены**
+
+Все ваши подписки были успешно удалены.
+
+Чтобы создать новую подписку, отправьте сообщение в формате:
+```
+канал1,канал2 ~ 09:00 ~ daily
+```
+"""
+            else:
+                message = """
+❌ **Ошибка удаления**
+
+Не удалось удалить подписки. Попробуйте позже.
+"""
+            
+            await self._send_message(channel_id, message)
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка удаления подписки: {e}")
+    
+    async def _create_subscription_dialog(self, channel_id: str, user_id: str, 
+                                        username: str, message: str):
+        """Диалог создания подписки"""
+        try:
+            help_message = """
+📝 **Создание подписки**
+
+Отправьте сообщение в формате:
+```
+канал1,канал2 ~ время ~ частота
+```
+
+**Примеры:**
+```
+general,random ~ 09:00 ~ daily
+development,qa ~ 18:00 ~ weekly
+```
+
+**Параметры:**
+• **Каналы:** через запятую (без пробелов после запятой)
+• **Время:** в формате HH:MM (24-часовой формат)
+• **Частота:** 
+  - `daily` - ежедневно
+  - `weekly` - еженедельно (по понедельникам)
+
+**Важно:** Бот должен быть добавлен во все указанные каналы!
+"""
+            
+            await self._send_message(channel_id, help_message)
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка диалога создания подписки: {e}")
+    
+    async def _parse_subscription_command(self, channel_id: str, user_id: str, 
+                                        username: str, message: str):
+        """Парсинг команды создания подписки"""
+        try:
+            # Формат: канал1,канал2 ~ время ~ частота
+            parts = message.split('~')
+            
+            if len(parts) != 3:
+                await self._send_message(channel_id, """
+❌ **Неверный формат**
+
+Используйте формат:
+```
+канал1,канал2 ~ время ~ частота
+```
+
+**Пример:**
+```
+general,random ~ 09:00 ~ daily
+```
+""")
+                return
+            
+            # Парсим части
+            channels_str = parts[0].strip()
+            time_str = parts[1].strip()
+            frequency_str = parts[2].strip().lower()
+            
+            # Проверяем каналы
+            if not channels_str:
+                await self._send_message(channel_id, "❌ Укажите хотя бы один канал")
+                return
+            
+            channels = [ch.strip() for ch in channels_str.split(',') if ch.strip()]
+            if not channels:
+                await self._send_message(channel_id, "❌ Укажите хотя бы один канал")
+                return
+            
+            # Проверяем время
+            if not re.match(r'^\d{1,2}:\d{2}$', time_str):
+                await self._send_message(channel_id, "❌ Неверный формат времени. Используйте HH:MM")
+                return
+            
+            # Проверяем частоту
+            if frequency_str not in ['daily', 'weekly']:
+                await self._send_message(channel_id, "❌ Частота должна быть 'daily' или 'weekly'")
+                return
+            
+            # Проверяем доступность каналов
+            missing_channels = []
+            for channel_name in channels:
+                channel_info = await self.get_channel_by_name(channel_name)
+                if not channel_info:
+                    missing_channels.append(channel_name)
+                    continue
+                
+                if not await self._check_channel_permissions(channel_info['id']):
+                    missing_channels.append(channel_name)
+            
+            if missing_channels:
+                channels_list = "\n".join(f"• {ch}" for ch in missing_channels)
+                await self._send_message(channel_id, f"""
+❌ **Бот не имеет доступа к каналам:**
+
+{channels_list}
+
+**Что нужно сделать:**
+1. Добавьте бота в эти каналы командой `/invite @{self.bot_username}`
+2. Повторите создание подписки
+""")
+                return
+            
+            # Создаем подписку
+            success = self.subscription_manager.create_subscription(
+                user_id, username, channels, time_str, frequency_str
+            )
+            
+            if success:
+                freq_text = "ежедневно" if frequency_str == 'daily' else "еженедельно"
+                channels_text = ", ".join(channels)
+                
+                await self._send_message(channel_id, f"""
+✅ **Подписка создана!**
+
+**Каналы:** {channels_text}
+**Время:** {time_str}
+**Частота:** {freq_text}
+
+Сводки будут приходить в личные сообщения по расписанию.
+
+**Управление подписками:**
+• `подписки` - посмотреть текущие подписки
+• `удалить подписку` - удалить все подписки
+""")
+            else:
+                await self._send_message(channel_id, "❌ Ошибка создания подписки. Попробуйте позже.")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка парсинга команды подписки: {e}")
+            await self._send_message(channel_id, "❌ Ошибка обработки команды. Попробуйте позже.")
+    
+    async def _send_help_message(self, channel_id: str):
+        """Отправка справочного сообщения"""
+        try:
+            help_message = f"""
+🤖 **Привет! Я Summary Bot**
+
+Я умею создавать саммари обсуждений в Mattermost и отправлять регулярные сводки по каналам.
+
+**Основные возможности:**
+
+📋 **В каналах:**
+• Добавьте меня в канал: `/invite @{self.bot_username}`
+• Напишите `!summary` в любом треде для создания саммари
+
+📊 **Подписки на каналы:**
+• Создайте подписку для получения регулярных сводок
+• Сводки приходят в личные сообщения по расписанию
+
+**Команды управления подписками:**
+• `подписки` - посмотреть текущие подписки
+• `удалить подписку` - удалить все подписки
+• `создать подписку` - получить инструкцию по созданию
+
+**Формат создания подписки:**
+```
+канал1,канал2 ~ время ~ частота
+```
+
+**Пример:**
+```
+general,random ~ 09:00 ~ daily
+```
+
+**Частота:**
+• `daily` - ежедневно
+• `weekly` - еженедельно (по понедельникам)
+
+**Важно:** Для работы с каналами бот должен быть в них добавлен!
+
+💡 *Для начала работы добавьте меня в нужные каналы и создайте подписку*
+"""
+            
+            await self._send_message(channel_id, help_message)
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка отправки справки: {e}") 

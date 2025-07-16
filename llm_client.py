@@ -162,6 +162,111 @@ class LLMClient:
         
         return "\n".join(formatted_messages)
     
+    async def generate_channels_summary(self, messages: List[Dict[str, Any]], 
+                                       channel_summaries: List[Dict], frequency: str) -> str:
+        """
+        Генерирует сводку по нескольким каналам
+        
+        Args:
+            messages: Список всех сообщений из каналов
+            channel_summaries: Информация о каналах
+            frequency: Частота отправки (daily/weekly)
+            
+        Returns:
+            Сводка по каналам
+        """
+        try:
+            # Формируем контекст для LLM
+            channels_context = self._format_channels_for_llm(messages, channel_summaries)
+            
+            period = "за последние 24 часа" if frequency == 'daily' else "за последнюю неделю"
+            
+            system_prompt = f"""Ты - помощник для создания сводок активности в корпоративных каналах.
+
+Твоя задача: проанализировать сообщения из нескольких каналов {period} и создать структурированную сводку.
+
+Формат ответа должен быть следующим:
+## 📊 Сводка активности каналов
+
+**🔥 Самые активные обсуждения:**
+[перечисли наиболее активные темы и их каналы]
+
+**👥 Активные участники:**
+[перечисли самых активных участников]
+
+**📋 Ключевые темы и решения:**
+[список важных вопросов, решений или объявлений по каналам]
+
+**🔗 Интересные ссылки и файлы:**
+[если есть важные ссылки или файлы]
+
+**💡 Краткие выводы:**
+[общие выводы о активности и тенденциях]
+
+Будь кратким, но информативным. Группируй похожие темы. Указывай канал для важных обсуждений.
+"""
+            
+            user_prompt = f"""Проанализируй активность в каналах {period} и создай сводку:
+
+{channels_context}
+
+Создай краткую, но информативную сводку активности."""
+            
+            # Отправляем запрос к LLM
+            response = await self._send_llm_request(system_prompt, user_prompt)
+            
+            if response:
+                # Очищаем и форматируем ответ
+                summary = self._clean_llm_response(response)
+                return summary
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Ошибка генерации сводки каналов: {e}")
+            return None
+    
+    def _format_channels_for_llm(self, messages: List[Dict[str, Any]], 
+                                channel_summaries: List[Dict]) -> str:
+        """Форматирует сообщения из каналов для передачи в LLM"""
+        # Группируем сообщения по каналам
+        channels_data = {}
+        for channel_info in channel_summaries:
+            channel_name = channel_info['channel_name']
+            channels_data[channel_name] = {
+                'display_name': channel_info['display_name'],
+                'messages': []
+            }
+        
+        # Сортируем сообщения по каналам
+        for msg in messages:
+            channel_name = msg.get('channel_name', 'unknown')
+            if channel_name in channels_data:
+                channels_data[channel_name]['messages'].append(msg)
+        
+        # Форматируем для LLM
+        formatted_channels = []
+        
+        for channel_name, data in channels_data.items():
+            if data['messages']:
+                formatted_channels.append(f"\n=== КАНАЛ: {data['display_name']} ===")
+                
+                # Сортируем сообщения по времени
+                sorted_messages = sorted(data['messages'], key=lambda x: x.get('create_at', 0))
+                
+                for msg in sorted_messages:
+                    username = msg.get('username', 'Неизвестный пользователь')
+                    message = msg.get('message', '')
+                    
+                    # Убираем лишние символы
+                    clean_message = message.strip()
+                    if clean_message:
+                        formatted_channels.append(f"{username}: {clean_message}")
+                
+                formatted_channels.append("")  # Пустая строка между каналами
+        
+        return "\n".join(formatted_channels)
+    
     async def test_connection(self) -> bool:
         """Тестирует соединение с LLM"""
         try:
