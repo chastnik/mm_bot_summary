@@ -35,7 +35,7 @@ class SubscriptionManager:
                         schedule_time TEXT NOT NULL,
                         frequency TEXT NOT NULL,
                         weekday INTEGER DEFAULT NULL,
-                        timezone TEXT DEFAULT 'UTC',
+                        timezone TEXT DEFAULT 'Europe/Moscow',
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         is_active BOOLEAN DEFAULT 1
@@ -77,7 +77,7 @@ class SubscriptionManager:
             raise
     
     def create_subscription(self, user_id: str, username: str, channels: List[str], 
-                          schedule_time: str, frequency: str, weekday: int = None, timezone: str = "UTC") -> bool:
+                           schedule_time: str, frequency: str, weekday: int = None, timezone: str = "Europe/Moscow") -> bool:
         """Создание новой подписки"""
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -228,7 +228,8 @@ class SubscriptionManager:
             
             # Конвертируем время в нужный часовой пояс
             user_tz = pytz.timezone(subscription['timezone'])
-            user_time = current_time.astimezone(user_tz)
+            # Сначала устанавливаем timezone как UTC, затем конвертируем в пользовательский часовой пояс
+            user_time = current_time.replace(tzinfo=pytz.UTC).astimezone(user_tz)
             logger.info(f"🕐 Текущее время пользователя: {user_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
             
             # Парсим время из подписки (формат HH:MM)
@@ -394,7 +395,7 @@ class SubscriptionManager:
             
             # Получаем текущее время в часовом поясе пользователя
             user_tz = pytz.timezone(timezone)
-            current_time = datetime.utcnow().astimezone(user_tz)
+            current_time = datetime.utcnow().replace(tzinfo=pytz.UTC).astimezone(user_tz)
             
             if frequency == 'daily':
                 # Для ежедневных подписок - с вчерашнего времени до сейчас

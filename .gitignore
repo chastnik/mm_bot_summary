@@ -126,6 +126,13 @@ dmypy.json
 bot.log
 *.log
 *.db
+subscriptions.db
+data/
+logs/
+
+# Docker
+docker-compose.override.yml
+.dockerignore
 
 # IDE
 .vscode/

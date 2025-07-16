@@ -127,16 +127,41 @@ class LLMClient:
             )
             
             if response.status_code == 200:
-                response_data = response.json()
-                content = response_data.get('message', {}).get('content', '')
-                
-                if content:
-                    # Очищаем ответ от thinking-блоков
-                    cleaned_content = self._clean_response(content)
-                    logger.info(f"✅ Получен ответ от LLM ({len(content)} символов, после очистки: {len(cleaned_content)} символов)")
-                    return cleaned_content
-                else:
-                    logger.warning("⚠️ Получен пустой ответ от LLM")
+                try:
+                    # Парсим streaming ответ - каждая строка это отдельный JSON объект
+                    response_text = response.text.strip()
+                    
+                    if not response_text:
+                        logger.warning("⚠️ Получен пустой ответ от LLM")
+                        return ""
+                    
+                    # Разделяем на строки и парсим каждую как JSON
+                    lines = response_text.split('\n')
+                    full_content = ""
+                    
+                    for line in lines:
+                        if line.strip():
+                            try:
+                                line_data = json.loads(line)
+                                message_content = line_data.get('message', {}).get('content', '')
+                                if message_content:
+                                    full_content += message_content
+                            except json.JSONDecodeError:
+                                # Пропускаем строки, которые не являются валидным JSON
+                                continue
+                    
+                    if full_content:
+                        # Очищаем ответ от thinking-блоков
+                        cleaned_content = self._clean_response(full_content)
+                        logger.info(f"✅ Получен ответ от LLM ({len(full_content)} символов, после очистки: {len(cleaned_content)} символов)")
+                        return cleaned_content
+                    else:
+                        logger.warning("⚠️ Не найден контент в ответе от LLM")
+                        return ""
+                        
+                except Exception as e:
+                    logger.error(f"❌ Ошибка обработки ответа: {e}")
+                    logger.error(f"❌ Текст ответа: {response.text[:500]}...")
                     return ""
             else:
                 logger.error(f"❌ Ошибка HTTP {response.status_code}: {response.text}")
@@ -213,12 +238,17 @@ class LLMClient:
 Создай краткую, но информативную сводку активности."""
             
             # Отправляем запрос к LLM
-            response = await self._send_llm_request(system_prompt, user_prompt)
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
+            }
+            response = await self._send_request(payload)
             
             if response:
-                # Очищаем и форматируем ответ
-                summary = self._clean_llm_response(response)
-                return summary
+                return response
             
             return None
             

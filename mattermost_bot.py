@@ -1497,9 +1497,14 @@ general,random ~ 09:00 ~ daily
                 await self._send_message(channel_id, error_message)
                 return
             
+            # Получаем часовой пояс пользователя
+            user_timezone = await self.get_user_timezone(user_id)
+            if not user_timezone:
+                user_timezone = "Europe/Moscow"
+            
             # Создаем подписку
             success = self.subscription_manager.create_subscription(
-                user_id, username, channels, time_str, frequency, weekday
+                user_id, username, channels, time_str, frequency, weekday, user_timezone
             )
             
             if success:
@@ -1706,3 +1711,54 @@ general,random ~ 09:00 ~ daily
                 return day_num
         
         return None 
+
+    async def get_user_timezone(self, user_id: str) -> Optional[str]:
+        """Получение часового пояса пользователя через API preferences"""
+        try:
+            response = self._session_requests.get(
+                f"{self.base_url}/api/v4/users/{user_id}/preferences",
+                timeout=10
+            )
+            
+            if response.status_code != 200:
+                logger.warning(f"⚠️ Ошибка получения настроек пользователя {user_id}: {response.status_code}")
+                return None
+            
+            # Проверяем содержимое ответа
+            response_text = response.text
+            logger.debug(f"Ответ API preferences для пользователя {user_id}: {response_text}")
+            
+            if not response_text or response_text.strip() == "" or response_text.strip() == "null":
+                logger.info(f"🌍 Настройки пользователя {user_id} пустые, используется Europe/Moscow")
+                return None
+            
+            try:
+                preferences = response.json()
+            except json.JSONDecodeError as e:
+                logger.warning(f"⚠️ Ошибка парсинга JSON настроек пользователя {user_id}: {e}")
+                logger.info(f"🌍 Настройки пользователя {user_id} отсутствуют, используется Europe/Moscow")
+                return None
+            
+            # Проверяем, что preferences это список
+            if not isinstance(preferences, list):
+                logger.warning(f"⚠️ Неожиданный формат настроек пользователя {user_id}, получен тип: {type(preferences)}")
+                logger.debug(f"Содержимое ответа: {preferences}")
+                return None
+            
+            # Ищем preference с timezone
+            for preference in preferences:
+                if preference.get('category') == 'display_settings' and preference.get('name') == 'timezone':
+                    timezone_data = json.loads(preference.get('value', '{}'))
+                    timezone = timezone_data.get('automaticTimezone', 
+                                               timezone_data.get('manualTimezone', None))
+                    if timezone:
+                        logger.info(f"🌍 Найден часовой пояс для пользователя {user_id}: {timezone}")
+                        return timezone
+                    break
+            
+            logger.info(f"🌍 Часовой пояс для пользователя {user_id} не найден, используется Europe/Moscow")
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения часового пояса для пользователя {user_id}: {e}")
+            return None
