@@ -63,6 +63,8 @@ class SubscriptionScheduler:
         """Проверка и выполнение подписок"""
         try:
             current_time = datetime.utcnow()
+            logger.info(f"🔍 Проверка подписок в {current_time.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+            
             due_subscriptions = self.subscription_manager.get_due_subscriptions(current_time)
             
             if due_subscriptions:
@@ -70,6 +72,8 @@ class SubscriptionScheduler:
                 
                 for subscription in due_subscriptions:
                     await self._execute_subscription(subscription)
+            else:
+                logger.info("📋 Нет подписок для выполнения")
         
         except Exception as e:
             logger.error(f"❌ Ошибка проверки подписок: {e}")

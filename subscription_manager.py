@@ -181,9 +181,12 @@ class SubscriptionManager:
                     WHERE is_active = 1
                 ''')
                 
+                all_subscriptions = cursor.fetchall()
+                logger.info(f"📊 Найдено {len(all_subscriptions)} активных подписок")
+                
                 due_subscriptions = []
                 
-                for row in cursor.fetchall():
+                for row in all_subscriptions:
                     subscription = {
                         'id': row[0],
                         'user_id': row[1],
@@ -195,9 +198,14 @@ class SubscriptionManager:
                         'timezone': row[7]
                     }
                     
+                    logger.info(f"🔍 Проверка подписки ID={subscription['id']}, user={subscription['username']}, time={subscription['schedule_time']}, freq={subscription['frequency']}")
+                    
                     # Проверяем, нужно ли выполнить эту подписку
                     if self._should_execute_subscription(subscription, current_time):
+                        logger.info(f"✅ Подписка ID={subscription['id']} готова к выполнению")
                         due_subscriptions.append(subscription)
+                    else:
+                        logger.info(f"⏳ Подписка ID={subscription['id']} не готова к выполнению")
                 
                 return due_subscriptions
                 
@@ -208,40 +216,60 @@ class SubscriptionManager:
     def _should_execute_subscription(self, subscription: Dict[str, Any], current_time: datetime) -> bool:
         """Проверяет, нужно ли выполнить подписку"""
         try:
+            sub_id = subscription['id']
+            logger.info(f"🔍 Проверка подписки ID={sub_id}")
+            
             # Конвертируем время в нужный часовой пояс
             user_tz = pytz.timezone(subscription['timezone'])
             user_time = current_time.astimezone(user_tz)
+            logger.info(f"🕐 Текущее время пользователя: {user_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
             
             # Парсим время из подписки (формат HH:MM)
             schedule_time_str = subscription['schedule_time']
             hour, minute = map(int, schedule_time_str.split(':'))
+            logger.info(f"⏰ Время подписки: {schedule_time_str} ({hour}:{minute})")
             
             # Создаем время выполнения на сегодня
             schedule_time = user_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            logger.info(f"📅 Время выполнения: {schedule_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
             
             # Проверяем, что время подошло (с точностью до минуты)
             time_diff = abs((user_time - schedule_time).total_seconds())
+            logger.info(f"⏱️ Разница во времени: {time_diff:.1f} секунд")
+            
             if time_diff > 60:  # Больше минуты разница
+                logger.info(f"⏸️ Время ещё не подошло (разница {time_diff:.1f}s > 60s)")
                 return False
+            
+            logger.info(f"✅ Время подошло! Разница: {time_diff:.1f} секунд")
             
             # Проверяем частоту выполнения
             frequency = subscription['frequency']
             weekday = subscription.get('weekday')
+            logger.info(f"🔄 Частота: {frequency}, день недели: {weekday}")
             
             if frequency == 'daily':
                 # Проверяем, была ли уже отправка сегодня
-                return not self._was_delivered_today(subscription['id'], user_time)
+                was_delivered = self._was_delivered_today(subscription['id'], user_time)
+                logger.info(f"📊 Была ли отправка сегодня: {was_delivered}")
+                return not was_delivered
             elif frequency == 'weekly':
                 # Для еженедельных подписок проверяем день недели
                 if weekday is not None:
                     # Проверяем, что сегодня именно тот день недели
                     # weekday: 0 = понедельник, 6 = воскресенье
-                    if user_time.weekday() != weekday:
+                    current_weekday = user_time.weekday()
+                    logger.info(f"📅 Сегодня: {current_weekday}, требуется: {weekday}")
+                    if current_weekday != weekday:
+                        logger.info(f"⏸️ Не тот день недели ({current_weekday} != {weekday})")
                         return False
                 
                 # Проверяем, была ли отправка на этой неделе
-                return not self._was_delivered_this_week(subscription['id'], user_time)
+                was_delivered = self._was_delivered_this_week(subscription['id'], user_time)
+                logger.info(f"📊 Была ли отправка на этой неделе: {was_delivered}")
+                return not was_delivered
             
+            logger.info(f"❌ Неизвестная частота: {frequency}")
             return False
             
         except Exception as e:
