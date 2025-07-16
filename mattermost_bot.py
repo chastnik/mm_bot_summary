@@ -901,7 +901,7 @@ class MattermostBot:
 **Примеры:**
 ```
 ~general, ~random ежедневно в 9 утра
-~development, ~qa каждую неделю в 18:00
+~development, ~qa еженедельно по вторникам в 18:00
 ~marketing каждый день в 15:30
 ```
 
@@ -914,9 +914,15 @@ class MattermostBot:
                     channels = ", ".join(f"~{ch}" for ch in sub['channels'])
                     freq_text = "ежедневно" if sub['frequency'] == 'daily' else "еженедельно"
                     
+                    # Добавляем день недели для еженедельных подписок
+                    weekday_text = ""
+                    if sub['frequency'] == 'weekly' and sub.get('weekday') is not None:
+                        weekday_names = ['понедельникам', 'вторникам', 'средам', 'четвергам', 'пятницам', 'субботам', 'воскресеньям']
+                        weekday_text = f" по {weekday_names[sub['weekday']]}"
+                    
                     lines.append(f"**{i}.** Каналы: {channels}")
                     lines.append(f"   Время: {sub['schedule_time']}")
-                    lines.append(f"   Частота: {freq_text}")
+                    lines.append(f"   Частота: {freq_text}{weekday_text}")
                     lines.append(f"   Создано: {sub['created_at'][:10]}")
                     lines.append("")
                 
@@ -926,7 +932,7 @@ class MattermostBot:
                 lines.append("")
                 lines.append("**Примеры новых подписок:**")
                 lines.append("• `~general ежедневно в 9 утра`")
-                lines.append("• `~random, ~development каждую неделю в 18:00`")
+                lines.append("• `~random, ~development еженедельно по пятницам в 18:00`")
                 
                 message = "\n".join(lines)
             
@@ -1094,6 +1100,7 @@ class MattermostBot:
 **Новый формат (рекомендуется):**
 ```
 ~general, ~random ежедневно в 9 утра
+~development, ~qa еженедельно по вторникам в 18:00
 ```
 
 **Старый формат:**
@@ -1128,8 +1135,11 @@ general,random ~ 09:00 ~ daily
                 await self._send_message(channel_id, "❌ Частота должна быть 'daily' или 'weekly'")
                 return
             
+            # Для старого формата day недели не поддерживаем
+            weekday = None
+            
             # Создаем подписку (используем общую логику)
-            await self._create_subscription(channel_id, user_id, username, channels, time_str, frequency_str)
+            await self._create_subscription(channel_id, user_id, username, channels, time_str, frequency_str, weekday)
             
         except Exception as e:
             logger.error(f"❌ Ошибка парсинга старого формата: {e}")
@@ -1140,6 +1150,8 @@ general,random ~ 09:00 ~ daily
         """Парсинг нового формата подписки: ~канал1, ~канал2 ежедневно в 9 утра"""
         try:
             # Новый формат: ~канал1, ~канал2 ежедневно в 9 утра
+            # Или: ~канал1, ~канал2 еженедельно по средам в 15:00
+            
             # Парсим каналы (все что начинается с ~ или просто названия каналов)
             channels = self._parse_channels_from_message(message)
             
@@ -1152,7 +1164,7 @@ general,random ~ 09:00 ~ daily
 **Примеры:**
 ```
 ~general, ~random ежедневно в 9 утра
-~development, ~qa каждую неделю в 18:00
+~development, ~qa еженедельно по вторникам в 18:00
 ```
 """)
                 return
@@ -1183,19 +1195,24 @@ general,random ~ 09:00 ~ daily
 **Примеры:**
 • `ежедневно` или `каждый день`
 • `еженедельно` или `каждую неделю`
-• `каждые 7 дней`
+• `еженедельно по средам` или `каждую неделю по пятницам`
 """)
                 return
             
+            # Парсим день недели (только для еженедельных подписок)
+            weekday = None
+            if frequency == 'weekly':
+                weekday = self._parse_weekday_from_message(message)
+            
             # Создаем подписку (используем общую логику)
-            await self._create_subscription(channel_id, user_id, username, channels, time_str, frequency)
+            await self._create_subscription(channel_id, user_id, username, channels, time_str, frequency, weekday)
             
         except Exception as e:
             logger.error(f"❌ Ошибка парсинга нового формата: {e}")
             await self._send_message(channel_id, "❌ Ошибка обработки команды. Попробуйте позже.")
     
     async def _create_subscription(self, channel_id: str, user_id: str, username: str, 
-                                 channels: List[str], time_str: str, frequency: str):
+                                 channels: List[str], time_str: str, frequency: str, weekday: Optional[int] = None):
         """Общая логика создания подписки"""
         try:
             # Проверяем доступность каналов
@@ -1226,19 +1243,25 @@ general,random ~ 09:00 ~ daily
             
             # Создаем подписку
             success = self.subscription_manager.create_subscription(
-                user_id, username, channels, time_str, frequency
+                user_id, username, channels, time_str, frequency, weekday
             )
             
             if success:
                 freq_text = "ежедневно" if frequency == 'daily' else "еженедельно"
                 channels_text = ", ".join(f"~{ch}" for ch in channels)
                 
+                # Добавляем день недели для еженедельных подписок
+                weekday_text = ""
+                if frequency == 'weekly' and weekday is not None:
+                    weekday_names = ['понедельникам', 'вторникам', 'средам', 'четвергам', 'пятницам', 'субботам', 'воскресеньям']
+                    weekday_text = f" по {weekday_names[weekday]}"
+                
                 await self._send_message(channel_id, f"""
 ✅ **Подписка создана!**
 
 **Каналы:** {channels_text}
 **Время:** {time_str}
-**Частота:** {freq_text}
+**Частота:** {freq_text}{weekday_text}
 
 Сводки будут приходить в личные сообщения по расписанию.
 
@@ -1340,5 +1363,32 @@ general,random ~ 09:00 ~ daily
         for pattern in weekly_patterns:
             if pattern in message_lower:
                 return 'weekly'
+        
+        return None
+    
+    def _parse_weekday_from_message(self, message: str) -> int:
+        """Извлекает день недели из сообщения"""
+        message_lower = message.lower()
+        
+        # Словарь дней недели (0 = понедельник, 6 = воскресенье)
+        weekdays = {
+            'понедельник': 0, 'понедельникам': 0, 'пн': 0,
+            'вторник': 1, 'вторникам': 1, 'вт': 1,
+            'среда': 2, 'средам': 2, 'ср': 2,
+            'четверг': 3, 'четвергам': 3, 'чт': 3,
+            'пятница': 4, 'пятницам': 4, 'пт': 4,
+            'суббота': 5, 'субботам': 5, 'сб': 5,
+            'воскресенье': 6, 'воскресеньям': 6, 'вс': 6
+        }
+        
+        # Ищем паттерны с "по"
+        for day_name, day_num in weekdays.items():
+            if f'по {day_name}' in message_lower:
+                return day_num
+        
+        # Ищем просто названия дней
+        for day_name, day_num in weekdays.items():
+            if day_name in message_lower:
+                return day_num
         
         return None 

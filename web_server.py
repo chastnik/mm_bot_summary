@@ -22,16 +22,19 @@ def create_app(bot) -> FastAPI:
     def _generate_subscriptions_html(subscriptions_info):
         """Генерирует HTML для отображения подписок"""
         if not subscriptions_info:
-            return """
-            <div style="text-align: center; color: #666; font-style: italic; padding: 20px;">
-                Нет активных подписок
-            </div>
-            """
+            return "<div style='text-align: center; color: #666; padding: 20px;'>Нет активных подписок</div>"
         
         html_parts = []
+        
         for sub in subscriptions_info:
             channels = ", ".join(sub['channels'])
             freq_text = "ежедневно" if sub['frequency'] == 'daily' else "еженедельно"
+            
+            # Добавляем день недели для еженедельных подписок
+            weekday_text = ""
+            if sub['frequency'] == 'weekly' and sub.get('weekday') is not None:
+                weekday_names = ['понедельникам', 'вторникам', 'средам', 'четвергам', 'пятницам', 'субботам', 'воскресеньям']
+                weekday_text = f" по {weekday_names[sub['weekday']]}"
             
             html_parts.append(f"""
             <div style="background: #f8f9fa; border-radius: 8px; padding: 15px; margin: 10px 0; border-left: 4px solid #28a745;">
@@ -42,7 +45,7 @@ def create_app(bot) -> FastAPI:
                     📢 Каналы: {channels}
                 </div>
                 <div style="color: #666; margin-bottom: 5px;">
-                    ⏰ Время: {sub['schedule_time']} ({freq_text})
+                    ⏰ Время: {sub['schedule_time']} ({freq_text}{weekday_text})
                 </div>
                 <div style="color: #999; font-size: 0.9em;">
                     📅 Создано: {sub['created_at'][:10]}

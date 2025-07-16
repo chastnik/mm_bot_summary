@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
 
 from subscription_manager import SubscriptionManager
+import pytz
 
 if TYPE_CHECKING:
     from mattermost_bot import MattermostBot
@@ -121,13 +122,8 @@ class SubscriptionScheduler:
                 )
                 return
             
-            # Определяем период для сбора сообщений
-            if frequency == 'daily':
-                since_time = datetime.utcnow() - timedelta(days=1)
-            elif frequency == 'weekly':
-                since_time = datetime.utcnow() - timedelta(weeks=1)
-            else:
-                since_time = datetime.utcnow() - timedelta(days=1)
+            # Определяем период для сбора сообщений с учетом дня недели
+            since_time, until_time = self.subscription_manager.get_message_collection_period(subscription)
             
             # Собираем сообщения из всех каналов
             all_messages = []
@@ -136,13 +132,21 @@ class SubscriptionScheduler:
             for channel_name, channel_id, channel_info in available_channels:
                 messages = await self.bot.get_channel_messages_since(channel_id, since_time)
                 if messages:
-                    all_messages.extend(messages)
-                    channel_summaries.append({
-                        'channel_name': channel_name,
-                        'channel_id': channel_id,
-                        'message_count': len(messages),
-                        'display_name': channel_info.get('display_name', channel_name)
-                    })
+                    # Фильтруем сообщения по периоду
+                    filtered_messages = []
+                    for msg in messages:
+                        msg_time = datetime.fromtimestamp(msg.get('create_at', 0) / 1000, tz=pytz.UTC)
+                        if since_time <= msg_time <= until_time:
+                            filtered_messages.append(msg)
+                    
+                    if filtered_messages:
+                        all_messages.extend(filtered_messages)
+                        channel_summaries.append({
+                            'channel_name': channel_name,
+                            'channel_id': channel_id,
+                            'message_count': len(filtered_messages),
+                            'display_name': channel_info.get('display_name', channel_name)
+                        })
             
             if not all_messages:
                 # Нет новых сообщений
@@ -152,36 +156,34 @@ class SubscriptionScheduler:
             
             # Генерируем сводку
             summary = await self.bot.llm_client.generate_channels_summary(
-                all_messages, 
-                channel_summaries,
-                frequency
+                all_messages, channel_summaries, frequency
             )
             
             if summary:
-                # Отправляем сводку пользователю
-                await self._send_subscription_summary(user_id, summary, channel_summaries, frequency)
+                # Отправляем сводку в личные сообщения
+                await self._send_summary_to_user(user_id, summary, channel_summaries, frequency)
                 self.subscription_manager.log_delivery(subscription_id, 'success', len(all_messages))
                 logger.info(f"✅ Сводка для {username} отправлена ({len(all_messages)} сообщений)")
             else:
                 # Ошибка генерации сводки
-                await self._send_generation_error(user_id)
+                await self._send_summary_generation_error(user_id, channel_summaries)
                 self.subscription_manager.log_delivery(
                     subscription_id, 
                     'error', 
                     len(all_messages), 
                     "Ошибка генерации сводки"
                 )
-            
+                
         except Exception as e:
             logger.error(f"❌ Ошибка выполнения подписки: {e}")
             self.subscription_manager.log_delivery(
-                subscription['id'], 
+                subscription_id, 
                 'error', 
                 0, 
-                str(e)
+                f"Ошибка выполнения: {str(e)}"
             )
     
-    async def _send_subscription_summary(self, user_id: str, summary: str, 
+    async def _send_summary_to_user(self, user_id: str, summary: str, 
                                        channel_summaries: List[Dict], frequency: str):
         """Отправка сводки пользователю"""
         try:
@@ -299,7 +301,7 @@ class SubscriptionScheduler:
         except Exception as e:
             logger.error(f"❌ Ошибка отправки уведомления: {e}")
     
-    async def _send_generation_error(self, user_id: str):
+    async def _send_summary_generation_error(self, user_id: str, channel_summaries: List[Dict]):
         """Отправка ошибки генерации сводки"""
         try:
             message = f"""

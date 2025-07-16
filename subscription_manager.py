@@ -34,6 +34,7 @@ class SubscriptionManager:
                         channels TEXT NOT NULL,
                         schedule_time TEXT NOT NULL,
                         frequency TEXT NOT NULL,
+                        weekday INTEGER DEFAULT NULL,
                         timezone TEXT DEFAULT 'UTC',
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -41,12 +42,19 @@ class SubscriptionManager:
                     )
                 ''')
                 
+                # Добавляем поле weekday, если его нет (миграция)
+                cursor.execute("PRAGMA table_info(subscriptions)")
+                columns = [column[1] for column in cursor.fetchall()]
+                if 'weekday' not in columns:
+                    cursor.execute('ALTER TABLE subscriptions ADD COLUMN weekday INTEGER DEFAULT NULL')
+                    logger.info("✅ Добавлено поле weekday в таблицу subscriptions")
+                
                 # Создаем таблицу для логов отправки
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS delivery_log (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         subscription_id INTEGER NOT NULL,
-                        delivery_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        delivered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         status TEXT NOT NULL,
                         message_count INTEGER DEFAULT 0,
                         error_message TEXT,
@@ -62,7 +70,7 @@ class SubscriptionManager:
             raise
     
     def create_subscription(self, user_id: str, username: str, channels: List[str], 
-                          schedule_time: str, frequency: str, timezone: str = "UTC") -> bool:
+                          schedule_time: str, frequency: str, weekday: int = None, timezone: str = "UTC") -> bool:
         """Создание новой подписки"""
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -80,16 +88,16 @@ class SubscriptionManager:
                     cursor.execute('''
                         UPDATE subscriptions 
                         SET channels = ?, schedule_time = ?, frequency = ?, 
-                            timezone = ?, updated_at = CURRENT_TIMESTAMP
+                            weekday = ?, timezone = ?, updated_at = CURRENT_TIMESTAMP
                         WHERE user_id = ? AND is_active = 1
-                    ''', (json.dumps(channels), schedule_time, frequency, timezone, user_id))
+                    ''', (json.dumps(channels), schedule_time, frequency, weekday, timezone, user_id))
                     logger.info(f"✅ Подписка для пользователя {username} обновлена")
                 else:
                     # Создаем новую подписку
                     cursor.execute('''
-                        INSERT INTO subscriptions (user_id, username, channels, schedule_time, frequency, timezone)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (user_id, username, json.dumps(channels), schedule_time, frequency, timezone))
+                        INSERT INTO subscriptions (user_id, username, channels, schedule_time, frequency, weekday, timezone)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', (user_id, username, json.dumps(channels), schedule_time, frequency, weekday, timezone))
                     logger.info(f"✅ Создана новая подписка для пользователя {username}")
                 
                 conn.commit()
@@ -106,7 +114,7 @@ class SubscriptionManager:
                 cursor = conn.cursor()
                 
                 cursor.execute('''
-                    SELECT id, channels, schedule_time, frequency, timezone, created_at, updated_at
+                    SELECT id, channels, schedule_time, frequency, weekday, timezone, created_at, updated_at
                     FROM subscriptions 
                     WHERE user_id = ? AND is_active = 1
                 ''', (user_id,))
@@ -118,9 +126,10 @@ class SubscriptionManager:
                         'channels': json.loads(row[1]),
                         'schedule_time': row[2],
                         'frequency': row[3],
-                        'timezone': row[4],
-                        'created_at': row[5],
-                        'updated_at': row[6]
+                        'weekday': row[4],
+                        'timezone': row[5],
+                        'created_at': row[6],
+                        'updated_at': row[7]
                     })
                 
                 return subscriptions
@@ -167,7 +176,7 @@ class SubscriptionManager:
                 cursor = conn.cursor()
                 
                 cursor.execute('''
-                    SELECT id, user_id, username, channels, schedule_time, frequency, timezone
+                    SELECT id, user_id, username, channels, schedule_time, frequency, weekday, timezone
                     FROM subscriptions 
                     WHERE is_active = 1
                 ''')
@@ -182,7 +191,8 @@ class SubscriptionManager:
                         'channels': json.loads(row[3]),
                         'schedule_time': row[4],
                         'frequency': row[5],
-                        'timezone': row[6]
+                        'weekday': row[6],
+                        'timezone': row[7]
                     }
                     
                     # Проверяем, нужно ли выполнить эту подписку
@@ -216,11 +226,19 @@ class SubscriptionManager:
             
             # Проверяем частоту выполнения
             frequency = subscription['frequency']
+            weekday = subscription.get('weekday')
             
             if frequency == 'daily':
                 # Проверяем, была ли уже отправка сегодня
                 return not self._was_delivered_today(subscription['id'], user_time)
             elif frequency == 'weekly':
+                # Для еженедельных подписок проверяем день недели
+                if weekday is not None:
+                    # Проверяем, что сегодня именно тот день недели
+                    # weekday: 0 = понедельник, 6 = воскресенье
+                    if user_time.weekday() != weekday:
+                        return False
+                
                 # Проверяем, была ли отправка на этой неделе
                 return not self._was_delivered_this_week(subscription['id'], user_time)
             
@@ -242,7 +260,7 @@ class SubscriptionManager:
                 cursor.execute('''
                     SELECT id FROM delivery_log 
                     WHERE subscription_id = ? AND status = 'success' 
-                    AND delivery_time >= ? AND delivery_time <= ?
+                    AND delivered_at >= ? AND delivered_at <= ?
                 ''', (subscription_id, today_start.isoformat(), today_end.isoformat()))
                 
                 return cursor.fetchone() is not None
@@ -264,7 +282,7 @@ class SubscriptionManager:
                 cursor.execute('''
                     SELECT id FROM delivery_log 
                     WHERE subscription_id = ? AND status = 'success' 
-                    AND delivery_time >= ?
+                    AND delivered_at >= ?
                 ''', (subscription_id, week_start.isoformat()))
                 
                 return cursor.fetchone() is not None
@@ -297,7 +315,7 @@ class SubscriptionManager:
                 cursor = conn.cursor()
                 
                 cursor.execute('''
-                    SELECT id, user_id, username, channels, schedule_time, frequency, timezone, 
+                    SELECT id, user_id, username, channels, schedule_time, frequency, weekday, timezone, 
                            created_at, updated_at
                     FROM subscriptions 
                     WHERE is_active = 1
@@ -313,13 +331,78 @@ class SubscriptionManager:
                         'channels': json.loads(row[3]),
                         'schedule_time': row[4],
                         'frequency': row[5],
-                        'timezone': row[6],
-                        'created_at': row[7],
-                        'updated_at': row[8]
+                        'weekday': row[6],
+                        'timezone': row[7],
+                        'created_at': row[8],
+                        'updated_at': row[9]
                     })
                 
                 return subscriptions
                 
         except Exception as e:
             logger.error(f"❌ Ошибка получения всех подписок: {e}")
-            return [] 
+            return []
+    
+    def get_message_collection_period(self, subscription: Dict[str, Any]) -> tuple:
+        """
+        Определяет период сбора сообщений для подписки с учетом дня недели
+        Возвращает (start_time, end_time) в UTC
+        """
+        try:
+            frequency = subscription['frequency']
+            timezone = subscription['timezone']
+            schedule_time = subscription['schedule_time']
+            weekday = subscription.get('weekday')
+            
+            # Парсим время из подписки
+            hour, minute = map(int, schedule_time.split(':'))
+            
+            # Получаем текущее время в часовом поясе пользователя
+            user_tz = pytz.timezone(timezone)
+            current_time = datetime.utcnow().astimezone(user_tz)
+            
+            if frequency == 'daily':
+                # Для ежедневных подписок - с вчерашнего времени до сейчас
+                yesterday = current_time - timedelta(days=1)
+                start_time = yesterday.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                end_time = current_time
+                
+            elif frequency == 'weekly':
+                if weekday is not None:
+                    # Для еженедельных подписок с указанным днем недели
+                    # Находим предыдущий такой же день недели
+                    current_weekday = current_time.weekday()
+                    days_back = (current_weekday - weekday) % 7
+                    
+                    # Если сегодня тот же день недели, то берем прошлую неделю
+                    if days_back == 0:
+                        days_back = 7
+                    
+                    # Находим начало периода (прошлый такой же день недели в это же время)
+                    start_date = current_time - timedelta(days=days_back)
+                    start_time = start_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                    end_time = current_time
+                    
+                else:
+                    # Для еженедельных подписок без указания дня недели (старая логика)
+                    # Берем с прошлой недели
+                    start_time = current_time - timedelta(weeks=1)
+                    end_time = current_time
+                    
+            else:
+                # Для неизвестной частоты - за последние 24 часа
+                start_time = current_time - timedelta(days=1)
+                end_time = current_time
+            
+            # Конвертируем в UTC
+            start_time_utc = start_time.astimezone(pytz.UTC)
+            end_time_utc = end_time.astimezone(pytz.UTC)
+            
+            return start_time_utc, end_time_utc
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка определения периода сбора сообщений: {e}")
+            # Возвращаем период за последние 24 часа как fallback
+            end_time = datetime.utcnow()
+            start_time = end_time - timedelta(days=1)
+            return start_time, end_time 
