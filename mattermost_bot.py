@@ -133,7 +133,7 @@ class MattermostBot:
     async def _check_channel_permissions(self, channel_id: str) -> bool:
         """Проверяет разрешения бота в канале"""
         try:
-            # Проверяем, есть ли доступ к каналу
+            # Способ 1: Проверяем членство через API
             response = self._session_requests.get(
                 f"{self.base_url}/api/v4/channels/{channel_id}/members/me",
                 timeout=5
@@ -141,9 +141,41 @@ class MattermostBot:
             
             if response.status_code == 200:
                 member_info = response.json()
+                logger.info(f"✅ Подтверждено членство в канале {channel_id}")
+                return True
+            
+            # Способ 2: Если первый способ не сработал, проверяем через список каналов
+            logger.info(f"🔍 Первичная проверка не прошла ({response.status_code}), проверяем через список каналов...")
+            
+            channels_response = self._session_requests.get(
+                f"{self.base_url}/api/v4/users/me/channels",
+                timeout=10
+            )
+            
+            if channels_response.status_code == 200:
+                all_channels = channels_response.json()
+                
+                # Проверяем, есть ли канал в списке каналов бота
+                for channel in all_channels:
+                    if channel.get('id') == channel_id:
+                        logger.info(f"✅ Канал {channel_id} найден в списке каналов бота")
+                        return True
+                
+                logger.warning(f"⚠️ Канал {channel_id} не найден в списке каналов бота")
+            
+            # Способ 3: Попытка получить базовую информацию о канале
+            logger.info(f"🔍 Проверяем базовый доступ к информации о канале {channel_id}...")
+            
+            channel_info_response = self._session_requests.get(
+                f"{self.base_url}/api/v4/channels/{channel_id}",
+                timeout=5
+            )
+            
+            if channel_info_response.status_code == 200:
+                logger.info(f"✅ Базовая информация о канале {channel_id} доступна")
                 return True
             else:
-                logger.warning(f"⚠️ Нет доступа к каналу {channel_id}: {response.status_code}")
+                logger.warning(f"⚠️ Базовая информация о канале {channel_id} недоступна: {channel_info_response.status_code}")
                 return False
                 
         except Exception as e:
@@ -640,10 +672,27 @@ class MattermostBot:
         return status
     
     async def get_channel_by_name(self, channel_name: str) -> Optional[Dict[str, Any]]:
-        """Получение информации о канале по имени или отображаемому имени"""
+        """Получение информации о канале по имени, отображаемому имени или ID"""
         try:
             # Убираем ~ в начале если есть
             clean_channel_name = channel_name.lstrip('~')
+            
+            # Проверяем, похоже ли это на ID канала (длинная строка из букв и цифр)
+            if len(clean_channel_name) >= 20 and clean_channel_name.isalnum():
+                logger.info(f"🔍 Поиск канала по ID: {clean_channel_name}")
+                
+                # Пытаемся найти по ID
+                id_response = self._session_requests.get(
+                    f"{self.base_url}/api/v4/channels/{clean_channel_name}",
+                    timeout=10
+                )
+                
+                if id_response.status_code == 200:
+                    channel_data = id_response.json()
+                    logger.info(f"✅ Найден канал по ID: '{channel_data.get('display_name', channel_data.get('name', 'неизвестный'))}' (ID: {clean_channel_name})")
+                    return channel_data
+                else:
+                    logger.info(f"⚠️ Канал с ID {clean_channel_name} не найден или нет доступа ({id_response.status_code})")
             
             # Сначала пытаемся найти по внутреннему имени (без пробелов)
             # Преобразуем в формат, подходящий для внутреннего имени
@@ -655,7 +704,9 @@ class MattermostBot:
             )
             
             if response.status_code == 200:
-                return response.json()
+                channel_data = response.json()
+                logger.info(f"✅ Найден канал по внутреннему имени: '{channel_data.get('display_name', channel_data.get('name', 'неизвестный'))}' (внутреннее имя: {internal_name})")
+                return channel_data
             
             # Если не найден по внутреннему имени, ищем по display_name среди всех каналов
             logger.info(f"🔍 Поиск канала '{clean_channel_name}' по display_name...")
@@ -681,7 +732,7 @@ class MattermostBot:
                         logger.info(f"✅ Найден канал '{channel_display_name}' (внутреннее имя: {channel_internal_name})")
                         return channel
                 
-            logger.warning(f"⚠️ Канал '{channel_name}' не найден ни по внутреннему, ни по отображаемому имени")
+            logger.warning(f"⚠️ Канал '{channel_name}' не найден ни по ID, ни по внутреннему имени, ни по отображаемому имени")
             return None
                 
         except Exception as e:
@@ -1274,29 +1325,52 @@ general,random ~ 09:00 ~ daily
             await self._load_existing_channels()
             
             # Проверяем доступность каналов
-            missing_channels = []
+            not_found_channels = []
+            no_access_channels = []
+            
             for channel_name in channels:
+                logger.info(f"🔍 Проверяем канал: {channel_name}")
+                
                 channel_info = await self.get_channel_by_name(channel_name)
                 if not channel_info:
-                    missing_channels.append(channel_name)
+                    logger.warning(f"⚠️ Канал не найден: {channel_name}")
+                    not_found_channels.append(channel_name)
                     continue
                 
+                logger.info(f"✅ Канал найден: {channel_info.get('display_name', channel_info.get('name', 'неизвестный'))} (ID: {channel_info['id']})")
+                
                 if not await self._check_channel_permissions(channel_info['id']):
-                    missing_channels.append(channel_name)
+                    logger.warning(f"⚠️ Нет доступа к каналу: {channel_name} (ID: {channel_info['id']})")
+                    no_access_channels.append(channel_name)
+                else:
+                    logger.info(f"✅ Доступ к каналу подтвержден: {channel_name}")
             
-            if missing_channels:
-                channels_list = "\n".join(f"• ~{ch}" for ch in missing_channels)
-                await self._send_message(channel_id, f"""
-❌ **Бот не имеет доступа к каналам:**
-
-{channels_list}
-
-**Что нужно сделать:**
-1. Добавьте бота в эти каналы командой `/invite @{self.bot_username}`
-2. Повторите создание подписки
+            # Формируем сообщения об ошибках
+            if not_found_channels or no_access_channels:
+                error_message = "❌ **Проблемы с каналами:**\n\n"
+                
+                if not_found_channels:
+                    channels_list = "\n".join(f"• ~{ch}" for ch in not_found_channels)
+                    error_message += f"**Каналы не найдены:**\n{channels_list}\n\n"
+                
+                if no_access_channels:
+                    channels_list = "\n".join(f"• ~{ch}" for ch in no_access_channels)
+                    error_message += f"**Нет доступа к каналам:**\n{channels_list}\n\n"
+                
+                error_message += f"""**Что нужно сделать:**
+1. Убедитесь, что названия каналов правильные
+2. Добавьте бота в эти каналы командой `/invite @{self.bot_username}`
+3. Повторите создание подписки
 
 💡 **Важно:** В Mattermost символ `~` необходим для выбора канала!
-""")
+
+**Справка по форматам:**
+• ID канала: `~cf787b0d1b9b28356462046be11f699f`
+• Внутреннее имя: `~bd-business-development`
+• Отображаемое имя: `~Тестовый канал`
+"""
+                
+                await self._send_message(channel_id, error_message)
                 return
             
             # Создаем подписку
