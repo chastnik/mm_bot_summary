@@ -1,8 +1,8 @@
-# 🤖 Mattermost Summary Bot v2.1
+# 🤖 Mattermost Summary Bot v2.4
 
 Умный бот для автоматического создания саммари тредов в Mattermost с использованием корпоративной LLM и поддержкой подписок на каналы.
 
-## ✨ Особенности v2.1
+## ✨ Особенности v2.4
 
 - 📊 **Подписки на каналы** - регулярные сводки активности в личные сообщения
 - 📱 **Личные сообщения** - управление подписками через DM с ботом
@@ -67,6 +67,161 @@ graph TD
     L --> K
     B --> M
     M --> K
+```
+
+### 📋 Поток обработки команд саммари
+
+```mermaid
+sequenceDiagram
+    participant User as 👤 Пользователь
+    participant MM as 📱 Mattermost
+    participant Bot as 🤖 Bot
+    participant LLM as 🧠 LLM Service
+    
+    User->>MM: Пишет "!summary" в треде
+    MM->>Bot: WebSocket событие
+    Bot->>Bot: Проверка команды
+    Bot->>MM: Получение сообщений треда
+    MM->>Bot: Данные треда
+    Bot->>LLM: Запрос саммари
+    LLM->>Bot: Структурированный ответ
+    Bot->>MM: Отправка саммари
+    MM->>User: Показ саммари
+```
+
+### 📊 Система подписок
+
+```mermaid
+flowchart TD
+    A[👤 Пользователь] -->|DM боту| B[📱 Обработка команды]
+    B --> C{Тип команды?}
+    
+    C -->|Создание подписки| D[🔍 Парсинг каналов/времени]
+    C -->|Просмотр подписок| E[📋 Показ списка]
+    C -->|Удаление подписки| F[🗑️ Удаление]
+    
+    D --> G[💾 Сохранение в БД]
+    G --> H[✅ Подтверждение]
+    
+    subgraph "Планировщик"
+        I[⏰ Проверка каждую минуту]
+        I --> J{Время подписки?}
+        J -->|Да| K[📊 Сбор сообщений]
+        J -->|Нет| I
+        K --> L[🧠 Генерация сводки]
+        L --> M[📨 Отправка в DM]
+        M --> I
+    end
+    
+    G --> I
+```
+
+### 🏗️ Структура компонентов
+
+```mermaid
+classDiagram
+    class MattermostBot {
+        +initialize()
+        +start_listening()
+        +handle_message()
+        +send_summary()
+        -_connect_websocket()
+        -_handle_post_event()
+        -_handle_direct_message()
+    }
+    
+    class SubscriptionManager {
+        +create_subscription()
+        +get_user_subscriptions()
+        +delete_subscription()
+        +check_channel_access()
+        -_init_database()
+    }
+    
+    class SubscriptionScheduler {
+        +start()
+        +stop()
+        -_scheduler_loop()
+        -_execute_subscription()
+        -_should_execute_subscription()
+    }
+    
+    class LLMClient {
+        +generate_summary()
+        +generate_channels_summary()
+        +test_connection()
+        -_make_request()
+    }
+    
+    class WebServer {
+        +create_app()
+        +health_check()
+        +status_check()
+        +subscriptions_info()
+    }
+    
+    class BotApplication {
+        +start()
+        +shutdown()
+        -_run_bot()
+        -_run_web_server()
+    }
+    
+    BotApplication --> MattermostBot
+    BotApplication --> SubscriptionScheduler
+    BotApplication --> WebServer
+    MattermostBot --> SubscriptionManager
+    MattermostBot --> LLMClient
+    SubscriptionScheduler --> SubscriptionManager
+    SubscriptionScheduler --> MattermostBot
+    WebServer --> MattermostBot
+```
+
+### 🔄 Жизненный цикл бота
+
+```mermaid
+stateDiagram-v2
+    [*] --> Initializing
+    
+    Initializing --> Connecting : Config OK
+    Initializing --> Error : Config Error
+    
+    Connecting --> Connected : WebSocket OK
+    Connecting --> Reconnecting : Connection Failed
+    
+    Connected --> Listening : Ready
+    Listening --> Processing : Message Received
+    Processing --> Listening : Response Sent
+    
+    Listening --> Reconnecting : Connection Lost
+    Reconnecting --> Connected : Reconnected
+    Reconnecting --> Error : Max Retries
+    
+    Connected --> Scheduling : Subscriptions Active
+    Scheduling --> Delivering : Time Match
+    Delivering --> Scheduling : Summary Sent
+    
+    Listening --> Shutdown : Stop Signal
+    Scheduling --> Shutdown : Stop Signal
+    Processing --> Shutdown : Stop Signal
+    
+    Shutdown --> [*]
+    Error --> [*]
+    
+    note right of Processing
+        Обработка команд:
+        - !summary
+        - Создание подписок
+        - Управление подписками
+    end note
+    
+    note right of Delivering
+        Автоматическая доставка:
+        - Проверка расписания
+        - Сбор сообщений
+        - Генерация сводки
+        - Отправка в DM
+    end note
 ```
 
 ## 🛠️ Установка и настройка
@@ -290,7 +445,7 @@ python config.py
 ```
 summary_bot/
 ├── main.py              # Основная точка входа
-├── mattermost_bot.py    # WebSocket бот (v2.0)
+├── mattermost_bot.py    # WebSocket бот (v2.4)
 ├── config.py           # Управление конфигурацией
 ├── llm_client.py       # LLM интеграция
 ├── web_server.py       # FastAPI веб-сервер
@@ -299,7 +454,7 @@ summary_bot/
 └── README.md          # Документация
 ```
 
-### Ключевые улучшения v2.0
+### Ключевые улучшения
 
 1. **WebSocket вместо HTTP polling** - мгновенная реакция
 2. **Прямые HTTP запросы** - избежание проблем парсинга URL  
@@ -307,6 +462,7 @@ summary_bot/
 4. **Современный веб-интерфейс** - адаптивный дизайн
 5. **Расширенное API** - готовность к интеграции
 6. **Метрики мониторинга** - продакшен ready
+7. **Естественные форматы подписок** - поддержка команд типа "каждую среду в 6 вечера"
 
 ## 🚀 Деплой в продакшен
 
@@ -373,4 +529,4 @@ MIT License
 
 ---
 
-**v2.1** - Добавлена система подписок на каналы с автоматической доставкой сводок в личные сообщения. 
+**v2.4** - Добавлена расширенная поддержка естественных форматов времени и дней недели для подписок. Теперь поддерживаются команды типа "каждую среду в 6 вечера" и "вторник 18:00". 
