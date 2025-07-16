@@ -490,14 +490,7 @@ MIT License - см. файл [LICENSE](LICENSE)
 
 ## 👥 Команда
 
-- **Разработчик**: [Your Name]
-- **Поддержка**: [support@example.com]
-
-## 🤝 Поддержка
-
-- 📧 Email: [support@example.com]
-- 💬 Mattermost: `@summary-bot`
-- 🐛 Issues: [GitHub Issues](https://github.com/your-username/mattermost-summary-bot/issues)
+- **Разработчик**: Стас Чашин
 
 ---
 
