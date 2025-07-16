@@ -39,6 +39,9 @@ class MattermostBot:
         self._websocket = None
         self._session_requests = requests.Session()
         
+        # Состояния пользователей для обработки команд
+        self._user_states = {}
+        
     async def initialize(self):
         """Инициализация бота"""
         try:
@@ -910,12 +913,24 @@ class MattermostBot:
         try:
             message_lower = message.lower().strip()
             
+            # Проверяем состояние пользователя
+            user_state = self._user_states.get(user_id, {})
+            
+            # Если пользователь в состоянии выбора подписки для удаления
+            if user_state.get('action') == 'deleting_subscription':
+                await self._handle_subscription_deletion_choice(channel_id, user_id, message)
+                return True
+            
             if message_lower in ['подписки', 'мои подписки', 'посмотреть подписки']:
                 await self._show_subscriptions(channel_id, user_id)
                 return True
             
             elif message_lower in ['удалить подписку', 'удалить подписки', 'отписаться']:
-                await self._delete_subscription(channel_id, user_id)
+                await self._delete_subscription_dialog(channel_id, user_id)
+                return True
+            
+            elif message_lower in ['удалить все подписки', 'удалить все']:
+                await self._delete_all_subscriptions(channel_id, user_id)
                 return True
             
             elif message_lower.startswith('создать подписку'):
@@ -1022,7 +1037,8 @@ class MattermostBot:
                     lines.append("")
                 
                 lines.append("**Управление подписками:**")
-                lines.append("• `удалить подписку` - удалить все подписки")
+                lines.append("• `удалить подписку` - выбрать подписку для удаления")
+                lines.append("• `удалить все подписки` - удалить все подписки сразу")
                 lines.append("• `создать подписку` - создать новую подписку")
                 lines.append("")
                 lines.append("**Примеры новых подписок:**")
@@ -1090,14 +1106,121 @@ class MattermostBot:
         except Exception as e:
             logger.error(f"❌ Ошибка диалога создания подписки: {e}")
     
-    async def _delete_subscription(self, channel_id: str, user_id: str):
-        """Удаление подписки пользователя"""
+    async def _delete_subscription_dialog(self, channel_id: str, user_id: str):
+        """Диалог удаления подписки - показывает список для выбора"""
+        try:
+            subscriptions = self.subscription_manager.get_user_subscriptions(user_id)
+            
+            if not subscriptions:
+                await self._send_message(channel_id, """
+❌ **Нет подписок для удаления**
+
+У вас нет активных подписок.
+
+Чтобы создать подписку, отправьте сообщение в формате:
+```
+~канал1, ~канал2 ежедневно в 9 утра
+```
+""")
+                return
+            
+            # Сохраняем состояние пользователя
+            self._user_states[user_id] = {
+                'action': 'deleting_subscription',
+                'subscriptions': subscriptions
+            }
+            
+            # Формируем сообщение со списком подписок
+            lines = ["🗑️ **Выберите подписку для удаления:**\n"]
+            
+            for i, sub in enumerate(subscriptions, 1):
+                channels = ", ".join(f"~{ch}" for ch in sub['channels'])
+                freq_text = "ежедневно" if sub['frequency'] == 'daily' else "еженедельно"
+                
+                # Добавляем день недели для еженедельных подписок
+                weekday_text = ""
+                if sub['frequency'] == 'weekly' and sub.get('weekday') is not None:
+                    weekday_names = ['понедельникам', 'вторникам', 'средам', 'четвергам', 'пятницам', 'субботам', 'воскресеньям']
+                    weekday_text = f" по {weekday_names[sub['weekday']]}"
+                
+                lines.append(f"**{i}.** {channels} - {freq_text}{weekday_text} в {sub['schedule_time']}")
+            
+            lines.append("")
+            lines.append("📝 **Как удалить:**")
+            lines.append("• Напишите **номер подписки** (например: `1`)")
+            lines.append("• Или напишите `все` для удаления всех подписок")
+            lines.append("• Или напишите `отмена` для отмены операции")
+            
+            message = "\n".join(lines)
+            await self._send_message(channel_id, message)
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка диалога удаления подписки: {e}")
+    
+    async def _handle_subscription_deletion_choice(self, channel_id: str, user_id: str, message: str):
+        """Обработка выбора подписки для удаления"""
+        try:
+            message_lower = message.lower().strip()
+            user_state = self._user_states.get(user_id, {})
+            subscriptions = user_state.get('subscriptions', [])
+            
+            # Очищаем состояние пользователя
+            self._user_states.pop(user_id, None)
+            
+            if message_lower in ['отмена', 'cancel', 'отменить']:
+                await self._send_message(channel_id, "❌ **Операция отменена**\n\nУдаление подписки отменено.")
+                return
+            
+            if message_lower in ['все', 'всё', 'all']:
+                await self._delete_all_subscriptions(channel_id, user_id)
+                return
+            
+            # Пытаемся получить номер подписки
+            try:
+                choice_num = int(message_lower)
+                if 1 <= choice_num <= len(subscriptions):
+                    subscription = subscriptions[choice_num - 1]
+                    success = self.subscription_manager.delete_subscription(user_id, subscription['id'])
+                    
+                    if success:
+                        channels = ", ".join(f"~{ch}" for ch in subscription['channels'])
+                        await self._send_message(channel_id, f"""
+✅ **Подписка удалена**
+
+Подписка на каналы {channels} была успешно удалена.
+
+**Управление подписками:**
+• `подписки` - посмотреть оставшиеся подписки
+• `удалить подписку` - удалить ещё одну подписку
+""")
+                    else:
+                        await self._send_message(channel_id, "❌ **Ошибка удаления**\n\nНе удалось удалить подписку. Попробуйте позже.")
+                else:
+                    await self._send_message(channel_id, f"❌ **Неверный номер**\n\nВведите число от 1 до {len(subscriptions)}.")
+                    
+            except ValueError:
+                await self._send_message(channel_id, """
+❌ **Неверный формат**
+
+Введите:
+• **Номер подписки** (например: `1`)
+• `все` для удаления всех подписок
+• `отмена` для отмены операции
+""")
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка обработки выбора удаления: {e}")
+            # Очищаем состояние при ошибке
+            self._user_states.pop(user_id, None)
+    
+    async def _delete_all_subscriptions(self, channel_id: str, user_id: str):
+        """Удаление всех подписок пользователя"""
         try:
             success = self.subscription_manager.delete_subscription(user_id)
             
             if success:
                 message = """
-✅ **Подписки удалены**
+✅ **Все подписки удалены**
 
 Все ваши подписки были успешно удалены.
 
@@ -1122,7 +1245,7 @@ class MattermostBot:
             await self._send_message(channel_id, message)
             
         except Exception as e:
-            logger.error(f"❌ Ошибка удаления подписки: {e}")
+            logger.error(f"❌ Ошибка удаления всех подписок: {e}")
     
     async def _send_help_message(self, channel_id: str):
         """Отправка справочного сообщения"""
@@ -1144,7 +1267,8 @@ class MattermostBot:
 
 **Команды управления подписками:**
 • `подписки` - посмотреть текущие подписки
-• `удалить подписку` - удалить все подписки
+• `удалить подписку` - выбрать подписку для удаления
+• `удалить все подписки` - удалить все подписки сразу
 • `создать подписку` - получить инструкцию по созданию
 
 **Создание подписки:**
@@ -1399,7 +1523,8 @@ general,random ~ 09:00 ~ daily
 
 **Управление подписками:**
 • `подписки` - посмотреть текущие подписки
-• `удалить подписку` - удалить все подписки
+• `удалить подписку` - выбрать подписку для удаления
+• `удалить все подписки` - удалить все подписки сразу
 """)
             else:
                 await self._send_message(channel_id, "❌ Ошибка создания подписки. Попробуйте позже.")
