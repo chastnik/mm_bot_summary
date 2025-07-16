@@ -247,7 +247,7 @@ def create_app(bot) -> FastAPI:
                 <p><strong>Как использовать:</strong></p>
                 <ol>
                     <li>Добавьте бота в канал: <span class="code">/invite @summary_bot</span></li>
-                    <li>В треде напишите команду: <span class="code">!summary</span></li>
+                    <li>В треде используйте команду: <span class="code">!summary</span>, <span class="code">summary</span>, <span class="code">саммари</span>, <span class="code">!саммари</span></li>
                     <li>Подождите несколько секунд - бот создаст саммари треда</li>
                     <li>Получите структурированное резюме обсуждения!</li>
                 </ol>
