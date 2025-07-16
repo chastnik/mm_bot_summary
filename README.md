@@ -29,7 +29,7 @@
 - **🔄 Планировщик подписок** - автоматическое выполнение задач по расписанию
 - **🛡️ Безопасность** - проверка прав доступа и валидация данных
 - **📝 Подробное логирование** - полная трассировка работы системы
-- **🔌 WebSocket интеграция** - реальное время получения событий
+- **🔌 WebSocket интеграция** - получения событий в реальном времени
 
 ## 🏗️ Архитектура
 
@@ -384,12 +384,25 @@ mattermost-summary-bot/
 ├── requirements.txt       # Зависимости Python
 ├── env.example           # Пример конфигурации
 ├── start.sh              # Скрипт запуска
-├── docs/                 # Документация
-│   ├── QUICKSTART.md
-│   ├── SUBSCRIPTIONS.md
-│   ├── EXAMPLES.md
-│   └── TROUBLESHOOTING.md
-└── README.md             # Этот файл
+├── LICENSE               # MIT лицензия
+├── CHANGELOG.md          # Журнал изменений
+├── subscriptions.db      # База данных подписок (SQLite)
+├── docker-compose.yml    # Docker Compose конфигурация
+├── Dockerfile           # Docker образ
+├── nginx.conf           # Конфигурация nginx
+├── .dockerignore        # Исключения для Docker
+├── .gitignore           # Исключения для Git
+├── .github/             # GitHub настройки
+│   ├── workflows/       # CI/CD пайплайны
+│   │   └── ci.yml
+│   └── dependabot.yml   # Автоматические обновления зависимостей
+├── docs/                # Документация
+│   ├── QUICKSTART.md    # Быстрый старт
+│   ├── SUBSCRIPTIONS.md # Руководство по подпискам
+│   ├── EXAMPLES.md      # Примеры использования
+│   └── TROUBLESHOOTING.md # Решение проблем
+├── venv/               # Виртуальное окружение Python
+└── README.md           # Основная документация
 ```
 
 ### Зависимости
@@ -490,14 +503,8 @@ MIT License - см. файл [LICENSE](LICENSE)
 
 ## 👥 Команда
 
-- **Разработчик**: [Your Name]
-- **Поддержка**: [support@example.com]
+- **Разработчик**: Стас Чашин
 
-## 🤝 Поддержка
-
-- 📧 Email: [support@example.com]
-- 💬 Mattermost: `@summary-bot`
-- 🐛 Issues: [GitHub Issues](https://github.com/your-username/mattermost-summary-bot/issues)
 
 ---
 
