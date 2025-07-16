@@ -640,22 +640,49 @@ class MattermostBot:
         return status
     
     async def get_channel_by_name(self, channel_name: str) -> Optional[Dict[str, Any]]:
-        """Получение информации о канале по имени"""
+        """Получение информации о канале по имени или отображаемому имени"""
         try:
             # Убираем ~ в начале если есть
             clean_channel_name = channel_name.lstrip('~')
             
-            # Получаем информацию о канале
+            # Сначала пытаемся найти по внутреннему имени (без пробелов)
+            # Преобразуем в формат, подходящий для внутреннего имени
+            internal_name = clean_channel_name.lower().replace(' ', '-').replace('_', '-')
+            
             response = self._session_requests.get(
-                f"{self.base_url}/api/v4/channels/name/{clean_channel_name}",
+                f"{self.base_url}/api/v4/channels/name/{internal_name}",
                 timeout=10
             )
             
             if response.status_code == 200:
                 return response.json()
-            else:
-                logger.warning(f"⚠️ Канал {channel_name} не найден: {response.status_code}")
-                return None
+            
+            # Если не найден по внутреннему имени, ищем по display_name среди всех каналов
+            logger.info(f"🔍 Поиск канала '{clean_channel_name}' по display_name...")
+            
+            # Получаем все каналы, в которых участвует бот
+            channels_response = self._session_requests.get(
+                f"{self.base_url}/api/v4/users/me/channels",
+                timeout=10
+            )
+            
+            if channels_response.status_code == 200:
+                all_channels = channels_response.json()
+                
+                # Ищем канал по display_name или name
+                for channel in all_channels:
+                    channel_display_name = channel.get('display_name', '')
+                    channel_internal_name = channel.get('name', '')
+                    
+                    # Сравниваем с оригинальным именем
+                    if (clean_channel_name.lower() == channel_display_name.lower() or
+                        clean_channel_name.lower() == channel_internal_name.lower() or
+                        internal_name == channel_internal_name):
+                        logger.info(f"✅ Найден канал '{channel_display_name}' (внутреннее имя: {channel_internal_name})")
+                        return channel
+                
+            logger.warning(f"⚠️ Канал '{channel_name}' не найден ни по внутреннему, ни по отображаемому имени")
+            return None
                 
         except Exception as e:
             logger.error(f"❌ Ошибка получения канала {channel_name}: {e}")
@@ -975,6 +1002,7 @@ class MattermostBot:
 ~канал1, ~канал2 еженедельно по вторникам в 18:00
 ~канал1 каждую среду в 6 вечера
 ~канал1 вторник 18:00
+~Канал с пробелами ежедневно в 15:20
 ```
 
 **Примеры:**
@@ -983,6 +1011,8 @@ class MattermostBot:
 ~development, ~qa еженедельно по вторникам в 18:00
 ~marketing каждую пятницу в 15:30
 ~support понедельник в 10:00
+~Тестовый канал ежедневно в 15:20
+~Мой канал каждую среду в 18:00
 ```
 
 **Периодичность:**
@@ -999,6 +1029,7 @@ class MattermostBot:
 
 💡 **Важно:** 
 - В Mattermost символ `~` необходим для выбора канала!
+- Поддерживаются каналы с пробелами в названии!
 - Бот должен быть добавлен во все указанные каналы!
 - Добавьте бота командой `/invite @{self.bot_username}`
 """
@@ -1307,14 +1338,32 @@ general,random ~ 09:00 ~ daily
         """Извлекает названия каналов из сообщения"""
         channels = []
         
-        # Ищем все упоминания каналов с ~
+        # Ищем все упоминания каналов с ~ (включая пробелы)
         import re
-        channel_pattern = r'~([a-zA-Z0-9_-]+)'
-        matches = re.findall(channel_pattern, message)
+        
+        # Паттерн для поддержки пробелов и русских символов
+        # Останавливается на ключевых словах, которые указывают на конец названия канала
+        stop_words = ['ежедневно', 'еженедельно', 'каждый', 'каждую', 'каждое', 'в', 'по', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье']
+        stop_pattern = '|'.join(stop_words)
+        
+        # Ищем каналы по паттерну ~название до стоп-слова или запятой
+        channel_pattern = rf'~([a-zA-Z0-9_\-\s\u0400-\u04FF]+?)(?:\s+(?:{stop_pattern})|\s*,|\s*$)'
+        matches = re.findall(channel_pattern, message, re.IGNORECASE)
         
         for match in matches:
-            if match not in channels:
-                channels.append(match)
+            clean_match = match.strip()
+            if clean_match and clean_match not in channels:
+                channels.append(clean_match)
+        
+        # Если паттерн со стоп-словами не сработал, пробуем простой поиск
+        if not channels:
+            simple_pattern = r'~([a-zA-Z0-9_\-\s\u0400-\u04FF]+?)(?:\s*,|\s*$)'
+            matches = re.findall(simple_pattern, message)
+            
+            for match in matches:
+                clean_match = match.strip()
+                if clean_match and clean_match not in channels:
+                    channels.append(clean_match)
         
         # Если не найдены каналы с ~, ищем обычные названия каналов
         if not channels:
