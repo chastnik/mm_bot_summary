@@ -1,9 +1,7 @@
-import asyncio
 import logging
-import requests
-import json
 import re
 from typing import List, Dict, Any
+from openai import AsyncOpenAI
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -14,10 +12,10 @@ class LLMClient:
     def __init__(self):
         self.base_url = Config.LLM_BASE_URL.rstrip('/')
         self.model = Config.LLM_MODEL
-        self.headers = {
-            'X-PROXY-AUTH': Config.LLM_PROXY_TOKEN,  # Правильный заголовок авторизации
-            'Content-Type': 'application/json'
-        }
+        self.client = AsyncOpenAI(
+            api_key=Config.LLM_PROXY_TOKEN,
+            base_url=self.base_url,
+        )
     
     async def generate_thread_summary(self, messages: List[Dict[str, Any]]) -> str:
         """
@@ -57,30 +55,16 @@ class LLMClient:
 
 Пиши кратко, по существу, на русском языке."""
 
-            # Создаем запрос в формате корпоративной LLM
-            payload = {
-                "model": self.model,
-                "stream": False,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "/no_think"
-                    },
-                    {
-                        "role": "system", 
-                        "content": system_prompt
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Проанализируй следующую переписку и создай саммари:\n\n{thread_context}"
-                    }
-                ],
-                "options": {
-                    "num_ctx": 16384  # 16K токенов контекста
-                }
-            }
+            messages_payload = [
+                {"role": "system", "content": "/no_think"},
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": f"Проанализируй следующую переписку и создай саммари:\n\n{thread_context}"
+                },
+            ]
 
-            response = await self._send_request(payload)
+            response = await self._send_chat_completion(messages_payload)
             if response:
                 return response
             else:
@@ -131,31 +115,17 @@ class LLMClient:
 
 Пиши кратко, по существу, на русском языке. Группируй похожие темы."""
 
-            # Создаем запрос в формате корпоративной LLM
-            payload = {
-                "model": self.model,
-                "stream": False,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "/no_think"
-                    },
-                    {
-                        "role": "system", 
-                        "content": system_prompt
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Проанализируй следующие сообщения из канала и создай саммари:\n\n{channel_context}"
-                    }
-                ],
-                "options": {
-                    "num_ctx": 16384  # 16K токенов контекста
-                }
-            }
+            messages_payload = [
+                {"role": "system", "content": "/no_think"},
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": f"Проанализируй следующие сообщения из канала и создай саммари:\n\n{channel_context}"
+                },
+            ]
             
             # Отправляем запрос к LLM
-            response = await self._send_request(payload)
+            response = await self._send_chat_completion(messages_payload)
             
             if response:
                 return response.strip()
@@ -182,67 +152,62 @@ class LLMClient:
         
         return content
     
-    async def _send_request(self, payload: dict) -> str:
-        """Отправляет запрос к корпоративной LLM"""
+    def _extract_content_from_completion(self, response: Any) -> str:
+        """Извлекает текст из ответа chat.completions."""
+        choices = getattr(response, "choices", None)
+        if not choices:
+            return ""
+
+        message = getattr(choices[0], "message", None)
+        if message is None:
+            return ""
+
+        content = getattr(message, "content", None)
+        if content is None:
+            return ""
+
+        if isinstance(content, str):
+            return content
+
+        if isinstance(content, list):
+            text_parts = []
+            for part in content:
+                if isinstance(part, dict):
+                    if part.get("type") == "text" and part.get("text"):
+                        text_parts.append(part["text"])
+                    continue
+
+                part_type = getattr(part, "type", None)
+                part_text = getattr(part, "text", None)
+                if part_type == "text" and part_text:
+                    text_parts.append(part_text)
+
+            return "".join(text_parts)
+
+        return ""
+
+    async def _send_chat_completion(self, messages: List[Dict[str, str]]) -> str:
+        """Отправляет запрос в LiteLLM через OpenAI chat.completions."""
         try:
-            url = f"{self.base_url}/api/chat"
-            
-            logger.info(f"📡 Отправляю запрос к LLM: {url}")
+            logger.info(f"📡 Отправляю запрос к LLM: {self.base_url}")
             logger.info(f"🤖 Модель: {self.model}")
-            
-            # Используем requests с синхронным вызовом в async контексте
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: requests.post(
-                    url,
-                    headers=self.headers,
-                    json=payload,
-                    timeout=120  # 2 минуты timeout
-                )
+
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
             )
-            
-            if response.status_code == 200:
-                try:
-                    # Парсим streaming ответ - каждая строка это отдельный JSON объект
-                    response_text = response.text.strip()
-                    
-                    if not response_text:
-                        logger.warning("⚠️ Получен пустой ответ от LLM")
-                        return ""
-                    
-                    # Разделяем на строки и парсим каждую как JSON
-                    lines = response_text.split('\n')
-                    full_content = ""
-                    
-                    for line in lines:
-                        if line.strip():
-                            try:
-                                line_data = json.loads(line)
-                                message_content = line_data.get('message', {}).get('content', '')
-                                if message_content:
-                                    full_content += message_content
-                            except json.JSONDecodeError:
-                                # Пропускаем строки, которые не являются валидным JSON
-                                continue
-                    
-                    if full_content:
-                        # Очищаем ответ от thinking-блоков
-                        cleaned_content = self._clean_response(full_content)
-                        logger.info(f"✅ Получен ответ от LLM ({len(full_content)} символов, после очистки: {len(cleaned_content)} символов)")
-                        return cleaned_content
-                    else:
-                        logger.warning("⚠️ Не найден контент в ответе от LLM")
-                        return ""
-                        
-                except Exception as e:
-                    logger.error(f"❌ Ошибка обработки ответа: {e}")
-                    logger.error(f"❌ Текст ответа: {response.text[:500]}...")
-                    return ""
-            else:
-                logger.error(f"❌ Ошибка HTTP {response.status_code}: {response.text}")
+
+            content = self._extract_content_from_completion(response)
+            if not content:
+                logger.warning("⚠️ Не найден контент в ответе от LLM")
                 return ""
-                
+
+            cleaned_content = self._clean_response(content)
+            logger.info(
+                f"✅ Получен ответ от LLM ({len(content)} символов, после очистки: {len(cleaned_content)} символов)"
+            )
+            return cleaned_content
+
         except Exception as e:
             logger.error(f"❌ Ошибка при запросе к LLM: {str(e)}")
             return ""
@@ -329,15 +294,11 @@ class LLMClient:
 
 Создай краткую, но информативную сводку активности."""
             
-            # Отправляем запрос к LLM
-            payload = {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ]
-            }
-            response = await self._send_request(payload)
+            messages_payload = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+            response = await self._send_chat_completion(messages_payload)
             
             if response:
                 return response
@@ -392,43 +353,18 @@ class LLMClient:
     async def test_connection(self) -> bool:
         """Тестирует соединение с LLM"""
         try:
-            payload = {
-                "model": self.model,
-                "stream": False,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "/no_think"
-                    },
-                    {
-                        "role": "user",
-                        "content": "Тест соединения"
-                    }
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "/no_think"},
+                    {"role": "user", "content": "Тест соединения"},
                 ],
-                "options": {
-                    "num_ctx": 4096
-                }
-            }
-            
-            url = f"{self.base_url}/api/chat"
-            
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: requests.post(
-                    url,
-                    headers=self.headers,
-                    json=payload,
-                    timeout=30
-                )
             )
-            
-            if response.status_code == 200:
+            if response:
                 logger.info("✅ LLM соединение успешно")
                 return True
-            else:
-                logger.error(f"❌ LLM соединение неуспешно: {response.status_code}")
-                return False
+            logger.error("❌ LLM соединение неуспешно: пустой ответ")
+            return False
                 
         except Exception as e:
             logger.error(f"Ошибка соединения с LLM: {e}")

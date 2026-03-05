@@ -1,5 +1,8 @@
 # 🤖 Mattermost Summary Bot
 
+[![CI](https://github.com/chastnik/mm_bot_summary/actions/workflows/ci.yml/badge.svg)](https://github.com/chastnik/mm_bot_summary/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://www.python.org/)
+
 Интеллектуальный бот для Mattermost с поддержкой автоматических подписок на сводки каналов и AI-генерацией контента.
 
 ## 📋 Содержание
