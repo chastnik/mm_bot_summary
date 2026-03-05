@@ -85,7 +85,7 @@ graph TB
 |-----------|------------|------------|
 | **MattermostBot** | Основная логика бота, обработка команд | WebSocket, HTTP API |
 | **SubscriptionManager** | Управление подписками и расписаниями | SQLite, pytz |
-| **LLMClient** | Взаимодействие с AI сервисом | HTTP API, JSON |
+| **LLMClient** | Взаимодействие с AI сервисом | AsyncOpenAI, LiteLLM (OpenAI-compatible API) |
 | **Scheduler** | Планировщик автоматических задач | asyncio, cron-like |
 | **WebServer** | Веб-интерфейс и API | FastAPI, Uvicorn |
 
@@ -93,7 +93,7 @@ graph TB
 
 ### Предварительные требования
 
-- Python 3.9+
+- Python 3.10+
 - Mattermost сервер
 - Доступ к LLM API
 
@@ -133,10 +133,10 @@ MATTERMOST_URL=https://your-mattermost-instance.com
 MATTERMOST_TOKEN=your-bot-token
 MATTERMOST_BOT_USERNAME=summary-bot
 
-# LLM конфигурация
+# LLM конфигурация (LiteLLM)
 LLM_PROXY_TOKEN=your-llm-token
-LLM_BASE_URL=https://your-llm-service.com
-LLM_MODEL=qwen3:14b
+LLM_BASE_URL=https://litellm.1bitai.ru
+LLM_MODEL=gpt-5
 
 # Общие настройки
 BOT_PORT=8080
@@ -165,10 +165,11 @@ python main.py
 | `MATTERMOST_BOT_USERNAME` | Имя пользователя бота | summary-bot |
 | `LLM_PROXY_TOKEN` | Токен LLM сервиса | обязательно |
 | `LLM_BASE_URL` | URL LLM API | обязательно |
-| `LLM_MODEL` | Модель LLM | qwen3:14b |
+| `LLM_MODEL` | Модель LLM | gpt-5 |
 | `BOT_PORT` | Порт веб-сервера | 8080 |
 | `LOG_LEVEL` | Уровень логирования | INFO |
 | `DEBUG` | Режим отладки | false |
+| `WEB_API_TOKEN` | Токен доступа к защищенным API (`/status`, `/info`, `/subscriptions`, `/metrics`) | обязательно для защищенных API |
 
 ### Создание бота в Mattermost
 
@@ -265,8 +266,12 @@ summary                     # Альтернативная команда
 |-------|------|----------|
 | `GET` | `/` | Главная страница с информацией о боте |
 | `GET` | `/health` | Проверка состояния бота |
-| `GET` | `/stats` | Статистика использования |
-| `GET` | `/subscriptions` | Список всех подписок |
+| `GET` | `/status` | Подробный статус компонентов (требует `X-API-Token`) |
+| `GET` | `/info` | Информация о боте (требует `X-API-Token`) |
+| `GET` | `/subscriptions` | Список активных подписок (требует `X-API-Token`) |
+| `GET` | `/metrics` | Метрики в text/plain (требует `X-API-Token`) |
+
+Защищенные эндпоинты используют заголовок `X-API-Token`. Значение берется из переменной окружения `WEB_API_TOKEN`.
 
 ### Примеры запросов
 
@@ -275,14 +280,19 @@ summary                     # Альтернативная команда
 curl http://localhost:8080/health
 ```
 
-#### Получение статистики
+#### Получение подробного статуса
 ```bash
-curl http://localhost:8080/stats
+curl -H "X-API-Token: $WEB_API_TOKEN" http://localhost:8080/status
 ```
 
 #### Список подписок
 ```bash
-curl http://localhost:8080/subscriptions
+curl -H "X-API-Token: $WEB_API_TOKEN" http://localhost:8080/subscriptions
+```
+
+#### Метрики
+```bash
+curl -H "X-API-Token: $WEB_API_TOKEN" http://localhost:8080/metrics
 ```
 
 ## 🚢 Развертывание
@@ -328,9 +338,18 @@ services:
       - "8080:8080"
     env_file:
       - .env
+    environment:
+      WEB_API_TOKEN: ${WEB_API_TOKEN:?WEB_API_TOKEN is required}
     volumes:
       - ./data:/app/data
     restart: unless-stopped
+```
+
+Перед запуском убедитесь, что переменная окружения задана (или присутствует в `.env`):
+
+```bash
+export WEB_API_TOKEN="your-strong-random-token"
+docker compose up -d
 ```
 
 ### Systemd Service
@@ -395,7 +414,7 @@ mattermost-summary-bot/
 ├── .dockerignore        # Исключения для Docker
 ├── .gitignore           # Исключения для Git
 ├── .github/             # GitHub настройки
-│   ├── workflows/       # CI/CD пайплайны
+│   ├── workflows/       # CI пайплайн
 │   │   └── ci.yml
 │   └── dependabot.yml   # Автоматические обновления зависимостей
 ├── docs/                # Документация
@@ -425,14 +444,10 @@ pytz>=2023.3            # Часовые пояса
 pip install -r requirements.txt
 
 # Запуск тестов
-python -m pytest tests/
-
-# Форматирование кода
-python -m black .
-python -m isort .
+python -m unittest discover -s tests -p 'test*.py'
 
 # Линтинг
-python -m flake8 .
+python -m flake8 . --exclude=venv,.venv,__pycache__ --select=E9,F63,F7,F82
 ```
 
 ### Контрибуция

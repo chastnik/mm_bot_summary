@@ -20,6 +20,7 @@ class Config:
     BOT_PORT = int(os.getenv('BOT_PORT', 8080))
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
     DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
+    WEB_API_TOKEN = os.getenv('WEB_API_TOKEN', '')
     
     @classmethod
     def validate(cls):

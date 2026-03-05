@@ -11,6 +11,8 @@ services:
       - "8080:8080"
     env_file:
       - .env
+    environment:
+      WEB_API_TOKEN: ${WEB_API_TOKEN:?WEB_API_TOKEN is required}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs

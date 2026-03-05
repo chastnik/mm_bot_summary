@@ -5,10 +5,11 @@
 """
 
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import HTMLResponse, JSONResponse
+from config import Config
 
 def create_app(bot) -> FastAPI:
     """Создает FastAPI приложение с переданным ботом"""
@@ -18,6 +19,16 @@ def create_app(bot) -> FastAPI:
         description="Бот для создания саммари тредов в Mattermost",
         version="2.0.0"
     )
+
+    def _verify_api_token(x_api_token: Optional[str] = Header(default=None)) -> None:
+        """Проверка токена для внутренних API-эндпоинтов."""
+        if not Config.WEB_API_TOKEN:
+            raise HTTPException(
+                status_code=503,
+                detail="WEB_API_TOKEN не настроен. Установите токен в окружении.",
+            )
+        if x_api_token != Config.WEB_API_TOKEN:
+            raise HTTPException(status_code=401, detail="Invalid API token")
     
     def _generate_subscriptions_html(subscriptions_info):
         """Генерирует HTML для отображения подписок"""
@@ -366,9 +377,10 @@ def create_app(bot) -> FastAPI:
             )
     
     @app.get("/status")
-    async def detailed_status():
+    async def detailed_status(x_api_token: Optional[str] = Header(default=None)):
         """Подробный статус всех компонентов"""
         try:
+            _verify_api_token(x_api_token)
             status = await bot.health_check()
             return {
                 "timestamp": datetime.now().isoformat(),
@@ -395,9 +407,10 @@ def create_app(bot) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.get("/info")
-    async def bot_info():
+    async def bot_info(x_api_token: Optional[str] = Header(default=None)):
         """Информация о боте"""
         try:
+            _verify_api_token(x_api_token)
             status = await bot.health_check()
             return {
                 "name": "Mattermost Summary Bot",
@@ -427,9 +440,10 @@ def create_app(bot) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.get("/subscriptions")
-    async def subscriptions():
+    async def subscriptions(x_api_token: Optional[str] = Header(default=None)):
         """Получение информации о подписках"""
         try:
+            _verify_api_token(x_api_token)
             all_subscriptions = bot.subscription_manager.get_all_subscriptions()
             
             return {
@@ -441,9 +455,10 @@ def create_app(bot) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.get("/metrics")
-    async def metrics():
+    async def metrics(x_api_token: Optional[str] = Header(default=None)):
         """Метрики для мониторинга"""
         try:
+            _verify_api_token(x_api_token)
             status = await bot.health_check()
             
             # Получаем информацию о подписках

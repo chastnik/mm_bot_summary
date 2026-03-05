@@ -38,10 +38,13 @@ python main.py
 MATTERMOST_URL=https://your-server.com
 MATTERMOST_TOKEN=your-bot-token
 
-# LLM (корпоративная)
-LLM_PROXY_TOKEN=token
-LLM_BASE_URL=llm_url
-LLM_MODEL=model
+# LLM (LiteLLM / OpenAI-compatible)
+LLM_PROXY_TOKEN=sk-your-token
+LLM_BASE_URL=https://litellm.1bitai.ru
+LLM_MODEL=gpt-5
+
+# API токен для защищенных эндпоинтов
+WEB_API_TOKEN=your-strong-random-token
 ```
 
 ## Команды бота
@@ -56,7 +59,7 @@ LLM_MODEL=model
 ## Мониторинг
 
 - **Дашборд**: http://localhost:8080
-- **Статус**: http://localhost:8080/status
+- **Статус** (защищенный API): `curl -H "X-API-Token: $WEB_API_TOKEN" http://localhost:8080/status`
 - **API**: http://localhost:8080/docs
 
 ---

@@ -1,5 +1,31 @@
 # 📝 Changelog
 
+## 🚀 [v2.5] - 2026-03-05
+
+### ✨ Новые возможности
+
+#### 🤖 Интеграция с LiteLLM через OpenAI SDK
+- `LLMClient` переведен на `AsyncOpenAI`
+- Запросы выполняются через `chat.completions.create`
+- Базовый URL прокси: `https://litellm.1bitai.ru`
+- Добавлена обработка ответа `chat.completions` для строкового и multipart `content`
+
+#### ✅ Обновленный GitHub CI
+- Упрощен workflow до чистого CI: `lint + tests`
+- Добавлена matrix-проверка на Python `3.10`, `3.11`, `3.12`
+- Добавлена отмена предыдущих запусков (`concurrency`)
+- Удалены тяжелые CD-шаги из основного CI
+
+#### 📚 Документация
+- Обновлены инструкции в `README.md`, `docs/QUICKSTART.md`, `docs/TROUBLESHOOTING.md`
+- Добавлены badges CI и поддерживаемых версий Python в `README.md`
+- Добавлен дизайн-док миграции в `docs/plans/2026-03-05-litellm-asyncopenai-design.md`
+
+### 🧪 Тесты
+- Добавлены unit-тесты `tests/test_llm_client.py` для извлечения текста из ответа `chat.completions`
+
+---
+
 ## 🚀 [v2.4] - 2025-07-16
 
 ### ✨ Новые возможности

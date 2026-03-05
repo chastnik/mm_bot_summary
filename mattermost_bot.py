@@ -40,6 +40,14 @@ class MattermostBot:
         
         # Состояния пользователей для обработки команд
         self._user_states = {}
+
+    async def _http_get(self, url: str, **kwargs):
+        """Неблокирующий GET поверх requests.Session."""
+        return await asyncio.to_thread(self._session_requests.get, url, **kwargs)
+
+    async def _http_post(self, url: str, **kwargs):
+        """Неблокирующий POST поверх requests.Session."""
+        return await asyncio.to_thread(self._session_requests.post, url, **kwargs)
         
     async def initialize(self):
         """Инициализация бота"""
@@ -63,7 +71,7 @@ class MattermostBot:
             })
             
             # Проверяем подключение к Mattermost
-            response = self._session_requests.get(
+            response = await self._http_get(
                 f"{self.base_url}/api/v4/users/me", 
                 timeout=10
             )
@@ -98,7 +106,7 @@ class MattermostBot:
         """Загружает список каналов, в которых уже находится бот"""
         try:
             # Получаем список каналов для текущего пользователя (бота)
-            response = self._session_requests.get(
+            response = await self._http_get(
                 f"{self.base_url}/api/v4/users/me/channels",
                 timeout=10
             )
@@ -136,7 +144,7 @@ class MattermostBot:
         """Проверяет разрешения бота в канале"""
         try:
             # Способ 1: Проверяем членство через API
-            response = self._session_requests.get(
+            response = await self._http_get(
                 f"{self.base_url}/api/v4/channels/{channel_id}/members/me",
                 timeout=5
             )
@@ -149,7 +157,7 @@ class MattermostBot:
             # Способ 2: Если первый способ не сработал, проверяем через список каналов
             logger.info(f"🔍 Первичная проверка не прошла ({response.status_code}), проверяем через список каналов...")
             
-            channels_response = self._session_requests.get(
+            channels_response = await self._http_get(
                 f"{self.base_url}/api/v4/users/me/channels",
                 timeout=10
             )
@@ -168,7 +176,7 @@ class MattermostBot:
             # Способ 3: Попытка получить базовую информацию о канале
             logger.info(f"🔍 Проверяем базовый доступ к информации о канале {channel_id}...")
             
-            channel_info_response = self._session_requests.get(
+            channel_info_response = await self._http_get(
                 f"{self.base_url}/api/v4/channels/{channel_id}",
                 timeout=5
             )
@@ -341,7 +349,7 @@ class MattermostBot:
             root_id = post.get('root_id') or post_id  # ID треда или самого поста
             
             # Проверяем, является ли это личным сообщением
-            if self._is_direct_message(channel_id):
+            if await self._is_direct_message(channel_id):
                 await self._handle_direct_message(channel_id, message, user_id)
                 return
             
@@ -435,7 +443,7 @@ class MattermostBot:
     async def _get_channel_info(self, channel_id: str) -> Optional[Dict[str, Any]]:
         """Получает информацию о канале"""
         try:
-            response = self._session_requests.get(
+            response = await self._http_get(
                 f"{self.base_url}/api/v4/channels/{channel_id}",
                 timeout=10
             )
@@ -846,7 +854,7 @@ class MattermostBot:
             since_timestamp = int((now - timedelta(hours=hours)).timestamp() * 1000)
             
             # Получаем сообщения канала
-            response = self._session_requests.get(
+            response = await self._http_get(
                 f"{self.base_url}/api/v4/channels/{channel_id}/posts",
                 params={
                     'since': since_timestamp,
@@ -879,7 +887,7 @@ class MattermostBot:
                     # Получаем имя пользователя
                     if user_id not in user_cache:
                         try:
-                            user_response = self._session_requests.get(
+                            user_response = await self._http_get(
                                 f"{self.base_url}/api/v4/users/{user_id}",
                                 timeout=5
                             )
@@ -976,7 +984,7 @@ class MattermostBot:
         """Получает все сообщения треда"""
         try:
             # Получаем пост-родитель и все ответы
-            root_response = self._session_requests.get(
+            root_response = await self._http_get(
                 f"{self.base_url}/api/v4/posts/{thread_id}",
                 timeout=10
             )
@@ -986,7 +994,7 @@ class MattermostBot:
                 return []
             
             # Получаем тред
-            thread_response = self._session_requests.get(
+            thread_response = await self._http_get(
                 f"{self.base_url}/api/v4/posts/{thread_id}/thread",
                 timeout=10
             )
@@ -1022,7 +1030,7 @@ class MattermostBot:
                 # Получаем имя пользователя (с кешированием)
                 if user_id not in user_cache:
                     try:
-                        user_response = self._session_requests.get(
+                        user_response = await self._http_get(
                             f"{self.base_url}/api/v4/users/{user_id}",
                             timeout=5
                         )
@@ -1049,7 +1057,7 @@ class MattermostBot:
             logger.error(f"❌ Ошибка получения сообщений треда: {e}")
             return []
     
-    async def _send_message(self, channel_id: str, message: str, root_id: Optional[str] = None):
+    async def _send_message(self, channel_id: str, message: str, root_id: Optional[str] = None) -> bool:
         """Отправляет сообщение в канал"""
         try:
             post_data = {
@@ -1060,7 +1068,7 @@ class MattermostBot:
             if root_id:
                 post_data['root_id'] = root_id
             
-            response = self._session_requests.post(
+            response = await self._http_post(
                 f"{self.base_url}/api/v4/posts",
                 json=post_data,
                 timeout=10
@@ -1068,11 +1076,14 @@ class MattermostBot:
             
             if response.status_code == 201:
                 logger.debug("📤 Сообщение отправлено успешно")
+                return True
             else:
                 logger.error(f"❌ Ошибка отправки сообщения: {response.status_code}")
+                return False
                 
         except Exception as e:
             logger.error(f"❌ Ошибка отправки сообщения: {e}")
+            return False
     
     def stop(self):
         """Остановка бота"""
@@ -1110,7 +1121,7 @@ class MattermostBot:
         # Проверяем соединение с Mattermost
         try:
             if self.base_url and self.token:
-                response = self._session_requests.get(
+                response = await self._http_get(
                     f"{self.base_url}/api/v4/users/me",
                     timeout=5
                 )
@@ -1137,7 +1148,7 @@ class MattermostBot:
                 logger.info(f"🔍 Поиск канала по ID: {clean_channel_name}")
                 
                 # Пытаемся найти по ID
-                id_response = self._session_requests.get(
+                id_response = await self._http_get(
                     f"{self.base_url}/api/v4/channels/{clean_channel_name}",
                     timeout=10
                 )
@@ -1153,7 +1164,7 @@ class MattermostBot:
             # Преобразуем в формат, подходящий для внутреннего имени
             internal_name = clean_channel_name.lower().replace(' ', '-').replace('_', '-')
             
-            response = self._session_requests.get(
+            response = await self._http_get(
                 f"{self.base_url}/api/v4/channels/name/{internal_name}",
                 timeout=10
             )
@@ -1167,7 +1178,7 @@ class MattermostBot:
             logger.info(f"🔍 Поиск канала '{clean_channel_name}' по display_name...")
             
             # Получаем все каналы, в которых участвует бот
-            channels_response = self._session_requests.get(
+            channels_response = await self._http_get(
                 f"{self.base_url}/api/v4/users/me/channels",
                 timeout=10
             )
@@ -1201,7 +1212,7 @@ class MattermostBot:
             since_timestamp = int(since_time.timestamp() * 1000)
             
             # Получаем сообщения из канала
-            response = self._session_requests.get(
+            response = await self._http_get(
                 f"{self.base_url}/api/v4/channels/{channel_id}/posts",
                 params={
                     'since': since_timestamp,
@@ -1234,7 +1245,7 @@ class MattermostBot:
                     # Получаем имя пользователя (с кешированием)
                     if user_id not in user_cache:
                         try:
-                            user_response = self._session_requests.get(
+                            user_response = await self._http_get(
                                 f"{self.base_url}/api/v4/users/{user_id}",
                                 timeout=5
                             )
@@ -1251,7 +1262,7 @@ class MattermostBot:
                     # Получаем информацию о канале для названия
                     channel_name = None
                     try:
-                        channel_response = self._session_requests.get(
+                        channel_response = await self._http_get(
                             f"{self.base_url}/api/v4/channels/{channel_id}",
                             timeout=5
                         )
@@ -1298,7 +1309,7 @@ class MattermostBot:
         """Получение или создание канала прямых сообщений"""
         try:
             # Попытка создать канал прямых сообщений
-            response = self._session_requests.post(
+            response = await self._http_post(
                 f"{self.base_url}/api/v4/channels/direct",
                 json=[self.bot_user_id, user_id],
                 timeout=10
@@ -1314,11 +1325,11 @@ class MattermostBot:
             logger.error(f"❌ Ошибка получения канала прямых сообщений: {e}")
             return None
     
-    def _is_direct_message(self, channel_id: str) -> bool:
+    async def _is_direct_message(self, channel_id: str) -> bool:
         """Проверяет, является ли канал личным сообщением"""
         try:
             # Получаем информацию о канале
-            response = self._session_requests.get(
+            response = await self._http_get(
                 f"{self.base_url}/api/v4/channels/{channel_id}",
                 timeout=5
             )
@@ -1337,7 +1348,7 @@ class MattermostBot:
         """Обработка личных сообщений"""
         try:
             # Получаем информацию о пользователе
-            user_response = self._session_requests.get(
+            user_response = await self._http_get(
                 f"{self.base_url}/api/v4/users/{user_id}",
                 timeout=5
             )
@@ -2068,8 +2079,9 @@ general,random ~ 09:00 ~ daily
                         if hour <= 11:
                             hour += 12
                     elif 'ночи' in pattern:
-                        if hour != 12:
-                            hour += 12
+                        # "2 ночи" = 02:00, "12 ночи" = 00:00
+                        if hour == 12:
+                            hour = 0
                     elif 'утра' in pattern:
                         if hour == 12:
                             hour = 0
@@ -2167,7 +2179,7 @@ general,random ~ 09:00 ~ daily
     async def get_user_timezone(self, user_id: str) -> Optional[str]:
         """Получение часового пояса пользователя через API preferences"""
         try:
-            response = self._session_requests.get(
+            response = await self._http_get(
                 f"{self.base_url}/api/v4/users/{user_id}/preferences",
                 timeout=10
             )

@@ -19,15 +19,15 @@ pip install -r requirements.txt --force-reinstall
 
 **Причина:** Устаревшие зафиксированные версии в requirements.txt
 
-**Решение:** Файл requirements.txt уже обновлен для использования совместимых версий:
+**Решение:** Установите зависимости из актуального `requirements.txt`:
 ```
-mattermostdriver>=7.3.2
-openai>=1.51.0
-python-dotenv>=1.0.0
-fastapi>=0.104.0
-uvicorn>=0.24.0
+fastapi>=0.100.0
+uvicorn>=0.23.0
 requests>=2.31.0
-typing-extensions>=4.11.0
+websockets>=11.0.0
+python-dotenv>=1.0.0
+pytz>=2023.3
+openai
 ```
 
 ## Проблемы с LLM соединением
@@ -44,8 +44,8 @@ typing-extensions>=4.11.0
 **Обновите настройки в .env:**
 ```env
 LLM_PROXY_TOKEN=your-actual-token
-LLM_BASE_URL=https://your-llm-service.com
-LLM_MODEL=your-model-name
+LLM_BASE_URL=https://litellm.1bitai.ru
+LLM_MODEL=gpt-5
 ```
 
 ### ❌ Ошибка: "Connection error"
@@ -55,14 +55,14 @@ LLM_MODEL=your-model-name
 **Проверьте:**
 ```bash
 # Проверка доступности
-curl -I https://llm.1bitai.ru
+curl -I https://litellm.1bitai.ru
 
 # Тест с curl
-curl -X POST https://llm.1bitai.ru/v1/chat/completions \
+curl -X POST https://litellm.1bitai.ru/chat/completions \
   -H "Authorization: Bearer your-token" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "qwen3:14b",
+    "model": "gpt-5",
     "messages": [{"role": "user", "content": "test"}],
     "max_tokens": 10
   }'
@@ -143,7 +143,7 @@ docker-compose logs -f summary-bot
 3. Плохое качество исходных сообщений
 
 **Решения:**
-- Проверьте статус LLM: `curl http://localhost:8080/status`
+- Проверьте статус LLM: `curl -H "X-API-Token: $WEB_API_TOKEN" http://localhost:8080/status`
 - Используйте команду в содержательных тредах
 - Перезапустите бота: `curl -X POST http://localhost:8080/restart`
 
@@ -155,7 +155,7 @@ docker-compose logs -f summary-bot
 curl http://localhost:8080/health
 
 # Детальный статус
-curl http://localhost:8080/status
+curl -H "X-API-Token: $WEB_API_TOKEN" http://localhost:8080/status
 
 # Логи
 docker-compose logs -f summary-bot
@@ -163,8 +163,8 @@ docker-compose logs -f summary-bot
 
 ### Тестирование компонентов
 ```bash
-# Тест LLM
-python test_llm.py
+# Тесты
+python -m unittest discover -s tests -p "test*.py"
 
 # Тест импортов
 python -c "from main import *; print('OK')"
@@ -194,7 +194,7 @@ pip install -r requirements.txt
    - Логи: `docker-compose logs summary-bot > bot-logs.txt`
    - Конфигурация: `cat .env` (без токенов!)
    - Версия Python: `python --version`
-   - Статус: `curl http://localhost:8080/status`
+   - Статус: `curl -H "X-API-Token: $WEB_API_TOKEN" http://localhost:8080/status`
 
 2. **Проверьте известные проблемы** в Issues репозитория
 
