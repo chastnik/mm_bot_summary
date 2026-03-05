@@ -12,6 +12,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  shell-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Validate bash syntax
+        run: |
+          shopt -s globstar nullglob
+          files=(scripts/**/*.sh)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No shell scripts found in scripts/"
+            exit 1
+          fi
+          for file in "${files[@]}"; do
+            echo "Checking syntax: $file"
+            bash -n "$file"
+          done
+
+      - name: ShellCheck
+        run: |
+          shopt -s globstar nullglob
+          files=(scripts/**/*.sh)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No shell scripts found in scripts/"
+            exit 1
+          fi
+          shellcheck "${files[@]}"
+
   lint:
     runs-on: ubuntu-latest
     steps:
