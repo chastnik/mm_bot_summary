@@ -1,5 +1,7 @@
 # 🚀 Быстрый старт - Mattermost Summary Bot
 
+🇬🇧 English version: [QUICKSTART_en.md](QUICKSTART_en.md)
+
 ## Минимальная установка (5 минут)
 
 ### 1. Скачивание

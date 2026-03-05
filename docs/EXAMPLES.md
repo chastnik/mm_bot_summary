@@ -1,5 +1,7 @@
 # 📝 Примеры использования
 
+🇬🇧 English version: [EXAMPLES_en.md](EXAMPLES_en.md)
+
 ## Пример треда
 
 **Исходное обсуждение:**

@@ -1,5 +1,7 @@
 # 🔧 Устранение проблем
 
+🇬🇧 English version: [TROUBLESHOOTING_en.md](TROUBLESHOOTING_en.md)
+
 ## Проблемы с зависимостями
 
 ### ModuleNotFoundError: No module named 'uvicorn'
